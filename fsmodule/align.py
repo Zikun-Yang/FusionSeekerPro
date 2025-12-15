@@ -2,7 +2,7 @@ import os
 from . import stat_split_reads
 from . import cluster
 
-def poa_all(outpath: str, chrom_valid: list[str]) -> int:
+def poa_all(outpath: str, genomic_regions: list[tuple[str, int, int]]) -> int:
 	"""
 	Generate aligned consensus sequence for each gene fusion
 	Args:
@@ -24,9 +24,9 @@ def poa_all(outpath: str, chrom_valid: list[str]) -> int:
 	
 	# get supporting reads' sequences and qualities
 	allreadseq = {}
-	for chrom in chrom_valid:
+	for chrom, start, end in genomic_regions:
 		multigene_read_info = []
-		with open(f'{outpath}raw_signal/multigene_read_{chrom}', 'r') as fi:
+		with open(f'{outpath}raw_signal/multigene_read_{chrom}_{start}_{end}.txt', 'r') as fi:
 			for line in fi:
 				if "chrom" in line:
 					continue
@@ -55,7 +55,7 @@ def poa_all(outpath: str, chrom_valid: list[str]) -> int:
 
 	return 0
 
-def polish_bp(outpath: str, chrom_valid: list[str], reference: str, datatype: str, polishbp: bool) -> int:
+def polish_bp(outpath: str, genomic_regions: list[tuple[str, int, int]], reference: str, datatype: str, polishbp: bool) -> int:
 	"""
 	Polish breakpoints of gene fusion events
 	Args:
@@ -87,10 +87,12 @@ def polish_bp(outpath: str, chrom_valid: list[str], reference: str, datatype: st
 		os.system(f"samtools index {outpath}align_workspace/allalignedseq.bam")
 		os.system(f"mkdir -p {outpath}align_workspace/raw_signal/")
 		# analyse the gene fusion events with aligned consensus sequences
-		for chrom in chrom_valid:
+		for chrom, start, end in genomic_regions:
 			stat_split_reads.get_split_reads(f"{outpath}align_workspace/allalignedseq.bam",
 											f"{outpath}align_workspace/",
 											chrom,
+											start,
+											end,
 											is_record_readseq = False)
 		# update
 		with open(f"{outpath}align_workspace/rawsignal.txt", "r") as fi:

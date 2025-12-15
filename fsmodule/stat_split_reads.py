@@ -389,9 +389,9 @@ def get_fusion_from_sameread(sameread:
 	return candidate
 
 """
-Step 1: get split reads that are aligned to two genes
+Entry: get multigene reads signals
 """
-def get_split_reads(bampath: str, outpath: str, chrom: str, is_record_readseq: bool = True) -> int:
+def get_split_reads(bampath: str, outpath: str, chrom: str, start: int, end: int, is_record_readseq: bool = True) -> int:
 	"""
 	Extract split reads from BAM file for a specific chromosome.
 	
@@ -403,13 +403,15 @@ def get_split_reads(bampath: str, outpath: str, chrom: str, is_record_readseq: b
 		bampath (str): Path to input BAM file
 		outpath (str): Output directory path
 		chrom (str): Chromosome name to process
+		start (int): Start position to process
+		end (int): End position to process
 		is_record_readseq (bool): Whether to record read sequences and quality scores (default: True)
 
 	Returns:
 		int: Returns 0 on success
 	"""
 	bam = pysam.AlignmentFile(bampath, 'rb')
-	allread = bam.fetch(chrom)
+	allread = bam.fetch(chrom, start, end)
 
 	multigene_read_info = []
 
@@ -428,7 +430,7 @@ def get_split_reads(bampath: str, outpath: str, chrom: str, is_record_readseq: b
 			exon_info.append(f"{mm[0]},{mm[1]},{mm[2]},{':'.join(mm[3])}") # exon_info: start, end, length, gene_name
 		exon_info = ';'.join(exon_info)
 		lines += f"{ll[0]}\t{ll[1]}\t{ll[2]}\t{ll[3]}\t{ll[4]}\t{ll[5]}\t{','.join(str(mm) for mm in ll[6])}\t{ll[7]}\t{ll[13]}\t{','.join(ll[8])}\t{','.join(ll[9])}\t{exon_info}\t{ll[14]}\t{ll[11]}\t{ll[12]}\n"
-	with open(outpath + 'raw_signal/multigene_read_' + chrom, 'w') as fo:
+	with open(f"{outpath}raw_signal/multigene_read_{chrom}_{start}_{end}.txt", 'w') as fo:
 		fo.write('chrom\tstart\tend\tread_name\tstrand\tis_supplementary\tgeneral_alignment_info\tmapq\tnmrate\tleft_gene\tright_gene\texon_info\tcigar\tsequence\tquality\n')
 		fo.write(lines)
 	

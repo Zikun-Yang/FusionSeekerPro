@@ -36,17 +36,22 @@ When using custom reference, make sure the chromosome name in BAM, GTF, and refe
 
 ## <a name="difference"></a> Differences between FusionSeekerPro and FusionSeeker?
 
-* reorganized code strcutures. descriptions of funstions and documents
+* reorganized code strcutures, descriptions of funstions and documents
 * fixed some known bugs in FusionSeeker
+* added bam preprocessing modules that only keep reads aligned to multiple genes. This can shorten the running time
+* changed the multiprocessing manner, split the reads by genomic windows rather than chromosomes. This can
 
 ## <a name="install"></a> Installation
 
 Dependencies for FusionSeekerPro:
 
 * python3
+* setproctitle
 * [pysam](https://github.com/pysam-developers/pysam)  (tested with version 0.17.0)
 * [minimap2](https://github.com/lh3/minimap2)  (tested with version 2.30)
 * [samtools](https://github.com/samtools/samtools)  (tested with version 1.22.1)
+* [bedtools](https://github.com/arq5x/bedtools2) (tested with version 2.31.1)
+* [pybedtools](https://github.com/daler/pybedtools) (tested with version 0.12.0)
 * [bsalign](https://github.com/ruanjue/bsalign)  (tested with version 1.2.1)
 
 ```sh
@@ -62,7 +67,7 @@ export PATH=$PWD/FusionSeekerPro/:$PATH
 ```sh
 mamba create --name fusions -y
 mamba activate fusions
-mamba install -c bioconda minimap2=2.24 pysam=0.17 samtools=1.9 -y
+mamba install -c bioconda minimap2=2.24 pysam=0.17 samtools=1.9 setproctitle=1.3.6 bedtools=2.31.1 pybedtools=0.12.0 setproctitle -y
 git clone https://github.com/ruanjue/bsalign.git
 cd bsalign && make
 export PATH=$PWD:$PATH
@@ -73,7 +78,6 @@ A test dataset is available to verify successful installation:
 fusionseekerpro --bam testdata/test.bam  -o test_out/ --datatype isoseq --ref testdata/test.fa.gz
 ```
 Output should be identical to confident_genefusion.txt and confident_genefusion_transcript_sequence.fa in the testdata folder, with 1 gene fusion and its transcript sequence. 
-(The FusionSeekerPro gene fusion discovery on test dataset should finish within several minutes with 4 CPUs and 2GB memory.)
 
 ## <a name="usage"></a> Usage
 
@@ -129,7 +133,7 @@ fusionseekerpro --bam isoseq.bam --datatype isoseq -o fusionseekerpro_out/ --gen
 ```
 
 
-### <a name="parameters"></a> Options of FusionSeeker
+### <a name="parameters"></a> Parameters
 #### 1. --minsupp, minimal number of supporting reads
 --min_supp is the most important argument for gene fusion candidate filtering of FusionSeekerPro. It is used to remove false-positive signals generated during sequencing or read alignment processes.
 By default, FusionSeekerPro estimates the volumn of noise signals from input dataset to assign a resonable --minsupp. If you find number of gene fusions is too few under default settings, you can speficy a lower --minsupp cutoff to allow in more candidates:
@@ -159,10 +163,13 @@ fusionseekerpro --bam isoseq.bam --datatype isoseq -o test_out/  --ref reference
 The output directory includes:
 ```
 # Final results:
+confident_genefusion_refined.txt               A list of refined confident gene fusion calls after mapping back to reference genome.
 confident_genefusion.txt                       A list of confident gene fusion calls from input BAM file. Includes gene names, breakpoint positions, number and name of fusion-supporting reads.
 confident_genefusion_transcript_sequence.fa    Transcript sequences of reported confident gene fusion 
 
 # Intermediate results:
+filtered.bam                                   Reads that are overlapped with more than one genes
+filtered.bam.bai                               Index of bam file
 clustered_candidate.txt                        A full list of gene fusion candidates before applying 
 rawsignal.txt                                  A list of all gene fusion raw signals.
 log.txt                                        Log file for debug.
@@ -174,7 +181,7 @@ log.txt                                        Log file for debug.
 
 If you have further questions, want to report a bug, or suggest a new feature, please raise an issue at the [issue page](https://github.com/zikun-yang/FusionSeekerPro/issues).
 
-## <a name="cite"></a>Citating
+## <a name="cite"></a>Citating FusionSeekerPro
 
 If you use FusionSeekerPro in your work, please cite:
 > To be updated

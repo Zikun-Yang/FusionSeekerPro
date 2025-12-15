@@ -60,6 +60,9 @@ def write_geneinfo(geneinfo: dict, outpath: str) -> None:
 					f.write(f"{exon[0]}-{exon[1]};")
 				f.write("\n")
 
+"""
+Entry: construct gene info
+"""
 def create(gtfinfo: Dict[str, List[str]], 
 			chrom_valid: List[str], 
 			use_geneid: bool, 

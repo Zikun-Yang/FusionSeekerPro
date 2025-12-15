@@ -1,3 +1,5 @@
+import statistics
+
 def findmax(neighbor: dict[str, list[str]]) -> str:
 	"""
 	Find the key with the maximum length in the neighbor dictionary.
@@ -76,13 +78,16 @@ def merge_genepair(clustered_candidates: list[list[str, str, int, str, int, str,
 	candidates += merge_event_with_same_genepair(event_with_same_genepair)
 	return candidates
 
-def merge_cluster(cluster: list[str], id2signal: dict[str, list[str, str, str, str, int, str, int, str, int, int, int, int]]) -> list[str, str, int, str, int, str, int, int, str]:
+def merge_cluster(cluster: list[str], 
+		id2signal: dict[str, list[str, str, str, str, int, str, int, str, int, int, int, int]],
+		outpath: str) -> list[str, str, int, str, int, str, int, int, str]:
 	"""
 	Merge gene fusion events in the same cluster.
 	Args:
 		cluster: A list of gene fusion events in the same cluster.
 		id2signal: A dictionary of gene fusion events.
-		id2signal[id] = [gene1, gene2, splitread, chrom1, bp1, chrom2, bp2, read_name, mapq, maplen1, maplen2, gapsize]
+		# id2signal[id] = [gene1, gene2, splitread, chrom1, bp1, chrom2, bp2, read_name, mapq, maplen1, maplen2, gapsize]
+		outpath: The path to the output directory.
 	Returns:
 		A string of merged gene fusion events in the same cluster.
 	"""
@@ -92,22 +97,34 @@ def merge_cluster(cluster: list[str], id2signal: dict[str, list[str, str, str, s
 	s1 = signal_list[0]
 	bp1 = [int(c[4]) for c in signal_list]
 	bp2 = [int(c[6]) for c in signal_list]
-	bp1 = int(int(sum(bp1)/len(signal_list)))  ###!!!!! wrong here
-	bp2 = int(int(sum(bp2)/len(signal_list)))  ###!!!!! wrong here
+	bp1 = statistics.multimode(bp1)
+	bp2 = statistics.multimode(bp2)
+	if len(bp1) > 1:
+		with open(f'{outpath}log.txt', 'a') as logfile:
+			logfile.write(f"[WARNING] Multiple breakpoints found for gene fusion {s1[0]} and {s1[1]}. Using the first most frequent breakpoint.\n")
+	if len(bp2) > 1:
+		with open(f'{outpath}log.txt', 'a') as logfile:
+			logfile.write(f"[WARNING] Multiple breakpoints found for gene fusion {s1[0]} and {s1[1]}. Using the first most frequent breakpoint.\n")
+	
+	bp1 = bp1[0]
+	bp2 = bp2[0]
+
 	quality = [int(q[8]) for q in signal_list]
 	quality = int(int(sum(quality)/len(signal_list)/2))
 	reads = ','.join([c[7] for c in signal_list])
-	numsupp = len(set([c[8] for c in signal_list]))
+	numsupp = len(set([c[7] for c in signal_list]))
 	merged_signal = [s1[0], s1[1], numsupp, s1[3], bp1, s1[5], bp2, quality, reads] # gene1, gene2, numsupp, chrom1, bp1, chrom2, bp2, quality, reads
 	return merged_signal
 
 def cluster_by_dbscan(rawsignals: list[list[str, str, str, str, int, str, int, str, int, int, int, int]], 
-					maxdistance: int) -> list[list[str, str, int, str, int, str, int, int, str]]:
+					maxdistance: int,
+					outpath: str) -> list[list[str, str, int, str, int, str, int, int, str]]:
 	"""
 	Cluster raw signals into gene fusion candidates using DBSCAN.
 	Args:
 		rawsignals: A list of raw signal lists.
 		maxdistance: The maximum distance between two breakpoints.
+		outpath: The path to the output directory.
 	Returns:
 		A list of clustered gene fusion events.
 	"""
@@ -142,7 +159,7 @@ def cluster_by_dbscan(rawsignals: list[list[str, str, str, str, int, str, int, s
 				newneighbor = [c for c in newneighbor if c not in cluster + newadd + done] 
 				newadd += newneighbor
 			newadd.remove(newadd[0]) # remove the first element from the new add list
-		candidates.append(merge_cluster(cluster, id2signal)) # merge the gene fusion events in the same cluster
+		candidates.append(merge_cluster(cluster, id2signal, outpath)) # merge the gene fusion events in the same cluster
 		done.extend(cluster)
 	return candidates
 
@@ -195,7 +212,7 @@ def cluster_bp(outpath: str, maxdistance: int, min_supp: int | None) -> int:
 			ss = rawsignal_grouped_by_genepair[genepair][0]
 			clustered_candidates.append([ss[0], ss[1], 1, ss[3], ss[4], ss[5], ss[6], ss[8], ss[7]])
 			continue
-		candidates = cluster_by_dbscan(rawsignal_grouped_by_genepair[genepair], maxdistance)
+		candidates = cluster_by_dbscan(rawsignal_grouped_by_genepair[genepair], maxdistance, outpath)
 		clustered_candidates.extend(candidates)
 		cluster_id += 1
 
