@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+
+import fsmodule.construct_gtf as construct_gtf
+import fsmodule.stat_split_reads as stat_split_reads
+import fsmodule.cluster as cluster
+import fsmodule.align as align
+
+from multiprocessing import Pool
+from typing import List
+import argparse
+import pysam
+import gzip
+import sys
+import os
+import time
+
+def parse_args() -> argparse.Namespace:
+	parser=argparse.ArgumentParser(description='Gene fusion caller for long-read sequencing data', usage='fusionseeker [-h] --bam <sort.bam>')
+	parser.add_argument('-v','--version', action='version', version='FusionSeeker v1.0.1')
+	parser.add_argument('--bam',type=str,default=False,required=True,help='Input sorted BAM. index required')
+	parser.add_argument('--datatype',type=str,default=False,help='Input read type (isoseq, nanopore) [nanopore]')
+	parser.add_argument('--gtf',type=str,default=False,help='Genome annotation file')
+	parser.add_argument('--ref',type=str,default=None,help='Reference genome. Required for breakpoint polishing')
+	parser.add_argument('--geneid',action='store_true',default=False,help='Use Gene ID instead of Gene name [False]')
+	parser.add_argument('--human38',action='store_true',default=False,help='Use reference genome and GTF for Human GCRh38 (default)')
+	parser.add_argument('--human19',action='store_true',default=False,help='Use reference genome and GTF for Human GCRh37')
+
+	parser.add_argument('-o','--outpath',type=str,default='./fusionseeker_out/',help='Output directory [./fusionseeker_out/]')
+	parser.add_argument('-s','--minsupp',type=int,default=None,help='Minimal reads supporting an event [auto]')
+
+	parser.add_argument('--maxdistance',type=int,default=False,help='Maximal distance to cluster raw signals [20 for isoseq, 40 for nanopore]')
+	parser.add_argument('--keepfile',action='store_true',default=False,help='Keep intermediate files [False]')
+	parser.add_argument('--thread',type=int,default=8,help='Number of threads [8]')
+
+	args=parser.parse_args()
+
+	return args
+
+def main():
+	args = parse_args()
+
+	# create output directory
+	if args.outpath[-1] != '/':
+		args.outpath += '/'
+	if os.path.exists(args.outpath):
+		os.system('rm -rf ' + args.outpath)
+	os.makedirs(args.outpath)
+
+	# write log file
+	with open(args.outpath+'log.txt', 'w') as logfile:
+		logfile.write('[INFO] Start calling gene fusions from '+args.bam+'...\n')
+
+	# check datatype
+	if args.datatype not in ['isoseq', 'nanopore']:
+		with open(args.outpath + 'log.txt', 'a') as logfile:
+			logfile.write('[WARNING] --datatype has to be one of the following: isoseq, nanopore. Using nanopore by default.\n')
+		args.datatype = 'nanopore'
+
+	if not args.maxdistance:
+		if args.datatype == 'isoseq':
+			args.maxdistance = 20
+		else:
+			args.maxdistance = 40
+
+	bamfile = pysam.AlignmentFile(args.bam, 'rb')
+	bamchrom = bamfile.references
+
+    # use default GTF file if not provided
+	if not args.gtf:
+		fusionseekerpath = os.path.dirname(__file__)
+		if fusionseekerpath != '':
+			fusionseekerpath += '/'
+		if args.human19:
+			args.gtf = fusionseekerpath + 'data/Homo_sapiens.GRCh37.87.chrname.gtf.gz'
+		else:
+			args.gtf = fusionseekerpath + 'data/Homo_sapiens.GRCh38.104.chrname.gtf.gz'
+
+    # read GTF file
+	try:
+		raw_gtfinfo = gzip.open(args.gtf, 'rt').read().split('\n')[:-1]
+	except:
+		raw_gtfinfo = open(args.gtf, 'r').read().split('\n')[:-1]
+
+	# parse GTF file
+	gtfinfo = {}
+	for line in raw_gtfinfo:
+		if line[0] == '#':
+			continue
+		if line.split('\t')[0] not in gtfinfo.keys():
+			gtfinfo[line.split('\t')[0]] = []
+		gtfinfo[line.split('\t')[0]].append(line)
+	
+	allchrom=list(gtfinfo.keys())
+
+	# check if all chromosomes from GTF file are present in BAM file
+	chrom_valid=[c for c in allchrom if c in bamchrom]
+	chrom_not_in_bam=[c for c in allchrom if c not in bamchrom]
+	chrom_not_in_gtf=[c for c in bamchrom if c not in allchrom]
+	if len(chrom_not_in_bam) > 0:
+		with open(args.outpath+'log.txt', 'a') as logfile:
+			logfile.write('[WARNING] Following chromosomes are not in BAM file, skipping '+';'.join(chrom_not_in_bam)+'\n')
+	if len(chrom_not_in_gtf)>0:
+		with open(args.outpath+'log.txt', 'a') as logfile:
+			logfile.write('[WARNING] Following chromosomes in BAM file are not in GTF file, skipping '+';'.join(chrom_not_in_gtf)+'\n')
+	if len(chrom_valid)==0:
+		with open(args.outpath+'log.txt', 'a') as logfile:
+			logfile.write('[ERROR] None of the chromosomes from GTF file are present in BAM. Check if chromosome names match between BAM and GTF. Abort.\n')
+		sys.exit(1)
+
+	"""
+	Step 0: Construct gene info
+	"""
+	geneinfo = construct_gtf.create(gtfinfo, chrom_valid, args.geneid, args.outpath, writedata = True)
+
+	"""
+	Step 1: Raw signal detection
+	"""
+	stat_split_reads.geneinfo = geneinfo
+	os.makedirs(args.outpath+'raw_signal/', exist_ok=True)
+
+	results = []
+	pool = Pool(args.thread)
+	for chrom in chrom_valid:
+		res = pool.apply_async(stat_split_reads.get_split_reads,
+								args=(args.bam, args.outpath, chrom))
+		results.append(res)
+	pool.close()
+	for res in results:
+		try:
+			res.get() # there will be error if the child process fails
+		except Exception as e:
+			with open(args.outpath+'log.txt', 'a') as logfile:
+				logfile.write(f"[ERROR] Error in worker process: {e}\n")
+			raise Exception(f"Error in worker process: {e}")
+	pool.join()
+
+	with open(args.outpath + 'log.txt','a') as logfile:
+		logfile.write('[INFO] Raw signal detection done. Start clustering raw signals...\n')
+
+	"""
+	Step 2: Clustering raw signals
+	"""
+	cluster.cluster_bp(args.outpath, args.maxdistance, args.minsupp)
+	
+	with open(args.outpath + 'log.txt', 'a') as logfile:
+		logfile.write('[INFO] Raw signal clustering done. Start transcript sequence generation...\n')
+
+	"""
+	Step 3: Transcript sequence generation
+	"""
+	align.geneinfo = geneinfo
+	align.poa_all(args.outpath, chrom_valid)
+	with open(args.outpath+'log.txt','a') as logfile:
+		if args.ref:
+			try:
+				align.polish_bp(args.outpath, chrom_valid, args.ref, args.datatype, True)
+				logfile.write('[INFO] Transcript sequence generation done. Start polishing gene fusion breakpoints...\n')
+			except:
+				logfile.write('[WARNING] Transcript sequence generation failed.\n')
+				os.system(f'touch {args.outpath}confident_genefusion_transcript_sequence.fa')
+		else:
+			try:
+				align.polish_bp(args.outpath, chrom_valid, args.ref, args.datatype, False)
+				logfile.write('[INFO] Transcript sequence generation done.\n[WARNING] No reference genome provided. Skipping breakpoint polish. (To enable breakpoint polish, please provide reference genome file.)\n')
+			except:
+				logfile.write('[WARNING] Transcript sequence generation failed.\n')
+				os.system(f'touch {args.outpath}confident_genefusion_transcript_sequence.fa')
+
+	allgf = open(args.outpath+'confident_genefusion.txt','r').read().split('\n')[:-1]
+	f = open(args.outpath+'confident_genefusion.txt','w')
+	badgf = []
+	for candi in allgf:
+		if candi.split('\t')[1].split('-AS')[0]==candi.split('\t')[2] or candi.split('\t')[2].split('-AS')[0]==candi.split('\t')[1]:
+			badgf+=[candi.split('\t')[0]]
+		else:
+			f.write(candi+'\n')
+	f.close()
+	if badgf!=[]:
+		allgfseq=open(args.outpath+'confident_genefusion_transcript_sequence.fa','r').read().split('>')[1:]
+		f=open(args.outpath+'confident_genefusion_transcript_sequence.fa','w')
+		for candiseq in allgfseq:
+			if candiseq.split('_')[0] not in badgf:
+				f.write('>'+candiseq)
+		f.close()
+
+	logfile=open(args.outpath+'log.txt','a')
+	logfile.write('[INFO] Transcript sequence generation done.\n')
+	logfile.close()
+
+
+	if not args.keepfile:
+		os.system('rm -r '+args.outpath+'align_workspace/')
+		os.system('rm -r '+args.outpath+'raw_signal/')
+		os.system('rm '+args.outpath+'confident_genefusion_all.txt')
+		logfile=open(args.outpath+'log.txt','a')
+		logfile.write('[INFO] Intermediate files removed.\n')
+		logfile.close()
+
+	logfile=open(args.outpath+'log.txt','a')
+	logfile.write('[INFO] Gene fusion detection done. Bye.\n')
+
+if __name__ == '__main__':
+	main()
