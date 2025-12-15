@@ -1,82 +1,84 @@
 # FusionSeeker
 
-A gene fusion caller for long-read single-molecular sequencing data.
+A advanced gene fusion caller for long-read single-molecular sequencing data. It is modified from the [FusionSeeker](https://github.com/Maggi-Chen/FusionSeeker) and can better call the fusion events. See [Differences between FusionSeekerPro and FusionSeeker?](#difference) for details.
 
-Author: Maggi Chen
+Authors: [Zikun Yang](https://github.com/Zikun-Yang), [Maggi Chen](https://github.com/Maggi-Chen) (author of FusionSeeker)
 
-Email: maggic@uab.edu
+## <a name="toc"></a>Table of Contents
 
-Draft date: Apr. 23, 2022
+- [Quick Start](#quickstart)
+- [Introduction](#intro)
+- [Differences between FusionSeekerPro and FusionSeeker?](#difference)
+- [Installation](#install)
+- [Usage](#usage)
+- [Parameters](#parameters)
+- [Outputs](#outputs)
+- [Getting Help](#help)
+- [Citing FusionSeekerPro](#cite)
 
-## Quick Start
+## <a name="quickstart"></a> Quick Start
 ```sh
-git clone https://github.com/Maggi-Chen/FusionSeeker.git
-cd FusionSeeker/
-./fusionseeker -h
+git clone https://github.com/Zikun-Yang/FusionSeekerPro.git
+cd FusionSeekerPro/
+./fusionseekerpro -h
 
-# quick gene fusion calling with sorted bam
-fusionseeker --bam merged.sort.bam --datatype isoseq --outpath fusionseeker_out/ --human38
+# quick gene fusion calling with stored genome
+fusionseekerpro --bam merged.sort.bam --datatype isoseq --outpath fusionseekerpro_out/ --human38
 
-# Gene fusion discovery with custom reference
-fusionseeker --bam merged.sort.bam --datatype nanopore --outpath fusionseeker_out/ --ref hg38.fa --gtf Human_hg38.gtf 
-
+# Gene fusion discovery with custom reference (e.g. T2T-CHM13v2.0)
+fusionseekerpro --bam merged.sort.bam --datatype nanopore --outpath fusionseekerpro_out/ --ref Human_T2T-CHM13v2.0.fa --gtf Human_T2T-CHM13v2.0.gtf 
 ```
 
+## <a name="intro"></a> Introduction
 
+FusionSeekerPro is a tool for gene fusion discovery with long-read transcriptome sequencing data. The input should be a sorted BAM (PacBio Iso-Seq, Nanopore, or mixed platform). The output is a list of confident gene fusions and their transcript sequences. By default, FusionSeekerPro uses Human GRCh38 and Ensembl annotation v104 (Homo_sapiens.GRCh38.104.chr.gtf.gz) as reference.<br />
+When using custom reference, make sure the chromosome name in BAM, GTF, and reference_genome.fa are identical. By default, FusionSeekerPro only considers gene with valid "gene_name" or "gene" in GTF and skips the remaining genes, unless --geneid is set.<br />
 
-## Description
+## <a name="difference"></a> Differences between FusionSeekerPro and FusionSeeker?
 
-FusionSeeker is a tool for gene fusion discovery with long-read transcriptome sequencing data. The input should be a sorted BAM (PacBio Iso-Seq, Nanopore, or mixed platform). The output is a list of confident gene fusions and their transcript sequences. By default, FusionSeeker uses Human GRCh38 and Ensembl annotation v104 (Homo_sapiens.GRCh38.104.chr.gtf.gz) as reference.<br />
-When using custom reference, make sure the chromosome name in BAM, GTF, and reference_genome.fa are identical. By default, FusionSeeker only considers gene with valid "gene_name" in GTF and skips the remaining genes, unless --geneid is set.<br />
-This program was tested on a x86_64 Linux system with a 128GB physical memory.
+* reorganized code strcutures. descriptions of funstions and documents
+* fixed some known bugs in FusionSeeker
 
+## <a name="install"></a> Installation
 
-## Depencency
-
-Dependencies for FusionSeeker:
+Dependencies for FusionSeekerPro:
 
 * python3
-* pysam  (tested with version 0.17.0)
-* minimap2  (tested with version 2.24)
-* samtools  (tested with version 1.9)
-* bsalign  (tested with version 1.2.1)
+* [pysam](https://github.com/pysam-developers/pysam)  (tested with version 0.17.0)
+* [minimap2](https://github.com/lh3/minimap2)  (tested with version 2.30)
+* [samtools](https://github.com/samtools/samtools)  (tested with version 1.22.1)
+* [bsalign](https://github.com/ruanjue/bsalign)  (tested with version 1.2.1)
 
-
-## Installation
-
-```
-git clone https://github.com/Maggi-Chen/FusionSeeker.git
+```sh
+git clone https://github.com/Zikun-Yang/FusionSeekerPro.git
 ```
 Then, please also add this directory to your PATH:
-```
-export PATH=$PWD/FusionSeeker/:$PATH
+```sh
+export PATH=$PWD/FusionSeekerPro/:$PATH
 ```
 
 
-To simplify the environment setup process, Anaconda2 (https://www.anaconda.com/) is recommended:
-```
-conda create --name fusions -y
-conda activate fusions
-conda install -c bioconda minimap2=2.24 pysam=0.17 samtools=1.9 -y
+ You can use miniforge3 to simplify the environment setup:
+```sh
+mamba create --name fusions -y
+mamba activate fusions
+mamba install -c bioconda minimap2=2.24 pysam=0.17 samtools=1.9 -y
 git clone https://github.com/ruanjue/bsalign.git
 cd bsalign && make
 export PATH=$PWD:$PATH
-
 ```
 
 A test dataset is available to verify successful installation:
 ```
-fusionseeker --bam FusionSeeker/testdata/test.bam  -o test_out/ --datatype isoseq --ref FusionSeeker/testdata/test.fa.gz
+fusionseekerpro --bam testdata/test.bam  -o test_out/ --datatype isoseq --ref testdata/test.fa.gz
 ```
 Output should be identical to confident_genefusion.txt and confident_genefusion_transcript_sequence.fa in the testdata folder, with 1 gene fusion and its transcript sequence. 
-(The FusionSeeker gene fusion discovery on test dataset should finish within several minutes with 4 CPUs and 2GB memory.)
+(The FusionSeekerPro gene fusion discovery on test dataset should finish within several minutes with 4 CPUs and 2GB memory.)
 
-
-## General usage
-
+## <a name="usage"></a> Usage
 
 ```
-fusionseeker [-h] --bam <sort.bam>
+fusionseekerpro [-h] --bam <sort.bam>
 
 Gene fusion caller for long-read sequencing data
 
@@ -91,7 +93,7 @@ optional arguments:
   --human38             Use reference genome and GTF for Human GCRh38 (default)
   --human19             Use reference genome and GTF for Human GCRh37
   -o OUTPATH, --outpath OUTPATH
-                        Output directory [./fusionseeker_out/]
+                        Output directory [./fusionseekerpro_out/]
   -s MINSUPP, --minsupp MINSUPP
                         Minimal reads supporting an event [auto]
   --maxdistance MAXDISTANCE
@@ -102,9 +104,8 @@ optional arguments:
 
 ```
 
-## Use cases
-FusionSeeker requires a input of read alignment results in BAM format sorted by coordinates. If you start with sequencing reads (Fasta or Fastq format), you may use minimap2 and samtools to map them to a reference genome before you can apply FusionSeeker:
-```
+FusionSeekerPro requires a input of read alignment results in BAM format sorted by coordinates. If you start with sequencing reads (Fasta or Fastq format), you may use minimap2 and samtools to map them to a reference genome before you can apply FusionSeekerPro:
+```sh
 # PacBio Iso-Seq
 minimap2 -ax splice:hq reference.fa  isoseq.fastq | samtools sort -o isoseq.bam
 samtools index isoseq.bam
@@ -113,58 +114,68 @@ minimap2 -ax splice reference.fa  nanopore.fastq | samtools sort -o nanopore.bam
 samtools index nanopore.bam
 ```
 
-FusionSeeker can be applied with built-in Human reference genome (hg38) and annotation (Ensembl v104):
+FusionSeekerPro can be applied with built-in Human reference genome (hg38) and annotation (Ensembl v104):
 ```
-fusionseeker --bam isoseq.bam --datatype isoseq -o fusionseeker_out/
+fusionseekerpro --bam isoseq.bam --datatype isoseq -o fusionseekerpro_out/
 ```
 Or with custom reference genome and annotation (Make sure the chromosome name in both files are identical to those in BAM file):
 ```
-fusionseeker --bam nanopore.bam  --datatype nanopore  -o fusionseeker_out/ --gtf annotation.gtf --ref reference.fa
+fusionseekerpro --bam nanopore.bam  --datatype nanopore  -o fusionseekerpro_out/ --gtf annotation.gtf --ref reference.fa
 ```
 
-By default, FusionSeeker uses only gene records with valid "gene_name" in the GTF file. To include all genes in the GTF file, use Gene ID instead:
+By default, FusionSeekerPro uses only gene records with valid "gene_name" in the GTF file. To include all genes in the GTF file, use Gene ID instead:
 ```
-fusionseeker --bam isoseq.bam --datatype isoseq -o fusionseeker_out/ --geneid 
+fusionseekerpro --bam isoseq.bam --datatype isoseq -o fusionseekerpro_out/ --geneid 
 ```
 
 
-### Options of FusionSeeker
+### <a name="parameters"></a> Options of FusionSeeker
 #### 1. --minsupp, minimal number of supporting reads
---min_supp is the most important argument for gene fusion candidate filtering of FusionSeeker. It is used to remove false-positive signals generated during sequencing or read alignment processes.
-By default, FusionSeeker estimates the volumn of noise signals from input dataset to assign a resonable --minsupp. If you find number of gene fusions is too few under default settings, you can speficy a lower --minsupp cutoff to allow in more candidates:
+--min_supp is the most important argument for gene fusion candidate filtering of FusionSeekerPro. It is used to remove false-positive signals generated during sequencing or read alignment processes.
+By default, FusionSeekerPro estimates the volumn of noise signals from input dataset to assign a resonable --minsupp. If you find number of gene fusions is too few under default settings, you can speficy a lower --minsupp cutoff to allow in more candidates:
 ```
-fusionseeker --bam isoseq.bam --datatype isoseq -o test_out/ --minsupp 5 
+fusionseekerpro --bam isoseq.bam --datatype isoseq -o test_out/ --minsupp 5 
 ```
 It is not suggested to set a --minsupp below 3, unless the sequencing depth of input dataset is extremely low.
 
 #### 2. --maxdistance, maxminal distance cutoff in density-based spatial clustering of applications with noise
-This option adjusts max distance cutoff used for clustering gene fusion raw signals. By default, FusionSeeker sets 20 for highly accurate reads (IsoSeq) and 40 for noisy reads (Nanopore).
+This option adjusts max distance cutoff used for clustering gene fusion raw signals. By default, FusionSeekerPro sets 20 for highly accurate reads (IsoSeq) and 40 for noisy reads (Nanopore).
 you can set a larger value of --maxdistance to tolerate more shifts in the breakpoint positions of raw signals:
 
 ```
-fusionseeker --bam isoseq.bam --datatype isoseq -o test_out/ --maxdistance 100
+fusionseekerpro --bam isoseq.bam --datatype isoseq -o test_out/ --maxdistance 100
 ```
 
 #### 3. --ref, reference genome
-Input reference genome allows FusionSeeker to align transcript sequences and refine breakpoint positions of confident gene fusion calls. Make sure to provide the same reference file used for read alignment.
-By default, FusionSeeker does NOT refine breakpoint positions when no reference genome is provided. 
+Input reference genome allows FusionSeekerPro to align transcript sequences and refine breakpoint positions of confident gene fusion calls. Make sure to provide the same reference file used for read alignment.
+By default, FusionSeekerPro does NOT refine breakpoint positions when no reference genome is provided. 
 (minimap2(>=2.24) is required to map transcript sequences to the reference.)
 ```
-fusionseeker --bam isoseq.bam --datatype isoseq -o test_out/  --ref reference.fa
+fusionseekerpro --bam isoseq.bam --datatype isoseq -o test_out/  --ref reference.fa
 ```
 
 
-## Output files
+## <a name="outputs"></a> Outputs
 The output directory includes:
 ```
+# Final results:
 confident_genefusion.txt                       A list of confident gene fusion calls from input BAM file. Includes gene names, breakpoint positions, number and name of fusion-supporting reads.
-confident_genefusion_transcript_sequence.fa    Transcript sequences of reported confident gene fusion calls. 
-clustered_candidate.txt                        A full list of gene fusion candidates before applying filters.
+confident_genefusion_transcript_sequence.fa    Transcript sequences of reported confident gene fusion 
+
+# Intermediate results:
+clustered_candidate.txt                        A full list of gene fusion candidates before applying 
 rawsignal.txt                                  A list of all gene fusion raw signals.
 log.txt                                        Log file for debug.
 (raw_signal/                                   Intermediate files during raw signal detection. Removed by default.)
-(poa_workspace/                                Intermediate files during transcript sequence generation with POA. Removed by default.)
+(align_workspace/                              Intermediate files during transcript sequence          generation with bsalign poa. Removed by default.)
 ```
 
+## <a name="help"></a>Getting Help
 
+If you have further questions, want to report a bug, or suggest a new feature, please raise an issue at the [issue page](https://github.com/zikun-yang/FusionSeekerPro/issues).
+
+## <a name="cite"></a>Citating
+
+If you use FusionSeekerPro in your work, please cite:
+> To be updated
 
