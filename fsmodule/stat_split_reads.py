@@ -1,5 +1,9 @@
+from errno import EILSEQ
 import pysam
 import os
+
+gene2strand = {}
+geneinfo = {}
 
 def overlap_with_genes(chrom, start, end, is_single_exon=False):
 	"""
@@ -176,8 +180,8 @@ def stat_read_info(read, is_record_readseq: bool) -> list:
 		is_record_readseq (bool): Whether to record read sequence and quality scores
 		
 	Returns:
-		list: List containing read details [chrom, start, end, read_name, strand,
-			             cigar_info, mapq, left_gene, right_gene, exon_segments, sequence,
+		list: List containing read details [chrom, start, end, read_name, strand, is_supplementary,
+			             general_alignment_info, mapq, left_gene, right_gene, exon_segments, sequence,
 			             quality, nm_rate, simple_cigar, read_object]
 	"""
 	alignpair = read.get_aligned_pairs() # get pair of alignment coordinates base by base [(query_base, reference_base),...]
@@ -357,35 +361,13 @@ def get_fusion_within_read(readinfo:
 				gapsize = abs(bp2 - bp1)
 				
 				# Format: [gene1, gene2, 'splitread', chrom1, bp1, chrom2, bp2, read_name, [mapq], maplen1, maplen2, gapsize]
-				if bp1 < bp2: # strand +
+				if readinfo[4] == gene2strand[gene1]:
 					candifusion = [gene1, gene2, 'splitread', chrom, bp1, chrom, bp2,
 					               readinfo[3], [readinfo[7]], maplen1, maplen2, gapsize]
 				else: # strand -
 					candifusion = [gene2, gene1, 'splitread', chrom, bp2, chrom, bp1,
 					               readinfo[3], [readinfo[7]], maplen2, maplen1, gapsize]
 				candidate.append(candifusion)
-	return candidate
-
-def get_fusion_from_sameread(sameread: 
-							list[list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment]]
-							) -> list[list[str, str, str, str, int, int, int, str, list[int], int, int]]:
-	"""
-	Get fusion events from a list of same read alignments
-	Args:
-		sameread: A list of same read alignments
-	Returns:
-		A list of fusion events
-	"""
-	candidate=[]
-	# First, check for fusions within individual reads
-	for read in sameread:
-		candidate.append(get_fusion_within_read(read))
-	
-	# Then, check for fusions between different alignments of the same read
-	for i in range(len(sameread)-1):
-		read1 = sameread[i]
-		for read2 in sameread[i + 1: ]:
-			candidate.append(get_fusion_from_readpair(read1,read2))
 	return candidate
 
 """
@@ -438,40 +420,11 @@ def get_split_reads(bampath: str, outpath: str, chrom: str, start: int, end: int
 	polish the fusion events
 	"""
 	fusion_events = []
-	lastname = None
-	sameread = []
 
 	for readinfo in multigene_read_info:
-		if readinfo[5]: # is supplementary alignment
-			pass
-			###########################################################
-			# TODO: process supplementary alignment
-			###########################################################
-		else:
-			event = get_fusion_within_read(readinfo)
-			if event is not None:
-				fusion_events.extend(event)
-
-		"""
-		if read[3] == lastname:
-			sameread.append(read)
-			continue
-		if lastname is None:
-			lastname = read[3]
-			sameread = [read]
-			continue
-		# Process previous group: check for fusions within individual reads and between alignments
-		if len(sameread) >= 1:
-			splitfusion = get_fusion_from_sameread(sameread)
-			fusion_events.append(splitfusion)
-		sameread = [read]
-		lastname = read[3]
-		"""
-
-	"""# Process last group
-	if len(sameread) >= 1:
-		splitfusion = get_fusion_from_sameread(sameread)
-		fusion_events.append(splitfusion)"""
+		event = get_fusion_within_read(readinfo)
+		if event is not None:
+			fusion_events.extend(event)
 
 	if not os.path.exists(f"{outpath}rawsignal.txt"):
 		with open(f"{outpath}rawsignal.txt", 'w') as fo:
@@ -480,91 +433,114 @@ def get_split_reads(bampath: str, outpath: str, chrom: str, start: int, end: int
 	with open(f"{outpath}rawsignal.txt", 'a') as fo:
 		for event in fusion_events:
 			#gene1, gene2, 'splitread', chrom1, bp1, chrom2, bp2, read1[3], [leftread[6],rightread[6]], maplen1, maplen2, gapsize
+			if gene2strand[event[0]] != gene2strand[event[1]]:
+				continue
 			mapq = [str(c) for c in event[8]]
 			fo.write(f"{event[0]}\t{event[1]}\t{event[2]}\t{event[3]}\t{event[4]}\t{event[5]}\t{event[6]}\t{event[7]}\t{','.join(mapq)}\t{event[9]}\t{event[10]}\t{event[11]}\n")
 	return 0
 
 
-##########
-##########
-##########
 
-def remove_ovlp_exon(oldreadinfo,side,removelength):
+def remove_ovlp_exon(oldreadinfo: list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment], 
+					side: str, 
+					removelength: int
+					) -> list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment]:
 	"""
 	Remove overlapping exon from a read
 	Args:
-		oldreadinfo: The old read info
+		oldreadinfo: The old readinfo
 		side: The side to remove the exon
-		removelength: The length to remove
+		removelength: The length to remove (bp)
 	Returns:
 		A list of read info
-	Example:
-		oldreadinfo = [chrom, start, end, read_name, strand, cigar_info, mapq, left_gene, right_gene, exon_info, sequence, quality]
-		side = 'right'
-		removelength = 10
-		readinfo = remove_ovlp_exon(oldreadinfo, side, removelength)
-		print(readinfo)
 	"""
-	readinfo=[]
-	exonlist=oldreadinfo[9]
-	deletedlen=0
+	readinfo = []
+	exonlist = oldreadinfo[11]
+	deletedlen = 0
 
-	inspos=oldreadinfo[11]
-	if side=='right':
-		inspos=inspos[::-1]
-	includeins=0
-	toremove=removelength
+	inspos = oldreadinfo[12].split(',') # cigar string
+	if side == 'right':
+		inspos = inspos[::-1] # reverse the inspos
+	includeins = 0
+	toremove = removelength
 	for c in inspos:
-		if toremove<=0:
+		if toremove <= 0:
 			break
 		if 'M' in c:
-			toremove-=int(c[:-1])
-			includeins+=int(c[:-1])
+			toremove -= int(c[:-1])
+			includeins += int(c[:-1])
 		if 'I' in c:
-			toremove-=int(c[:-1])
-	removelength=includeins
+			toremove -= int(c[:-1])
+	removelength = includeins
 	
-	if side=='right':
-		while len(exonlist)>0 and removelength>0:
-			if removelength>=exonlist[-1][2]-10 :
-				removelength-=exonlist[-1][2]
-				deletedlen+=exonlist[-1][2]
-				exonlist=exonlist[:-1]
+	if side == 'right':
+		while len(exonlist) > 0 and removelength > 0:
+			if removelength >= exonlist[-1][2]:
+				removelength -= exonlist[-1][2]
+				deletedlen += exonlist[-1][2]
+				exonlist = exonlist[:-1]
 				continue
-			exonlist[-1]=[exonlist[-1][0],exonlist[-1][1]-removelength,exonlist[-1][2]-removelength,exonlist[-1][3]]
-			deletedlen+=removelength
-			removelength=0
-		if exonlist==[]:
+			exonlist[-1] = [exonlist[-1][0], exonlist[-1][1] - removelength, exonlist[-1][2] - removelength, exonlist[-1][3]]
+			deletedlen += removelength
+			removelength = 0
+		if exonlist == []:
 			return []
-		readinfo=[oldreadinfo[0],oldreadinfo[1],exonlist[-1][1],oldreadinfo[3],oldreadinfo[4],oldreadinfo[5],oldreadinfo[6],oldreadinfo[7],exonlist[-1][3],exonlist,oldreadinfo[10]]
+		readinfo = [oldreadinfo[0], 
+					oldreadinfo[1], 
+					exonlist[-1][1], 
+					oldreadinfo[3], 
+					oldreadinfo[4], 
+					oldreadinfo[5], 
+					oldreadinfo[6], 
+					oldreadinfo[7], 
+					oldreadinfo[8], 
+					exonlist[-1][3], 
+					exonlist, 
+					oldreadinfo[11], 
+					oldreadinfo[12], 
+					oldreadinfo[13], 
+					oldreadinfo[14], 
+					oldreadinfo[15]]
 	else:
-		while len(exonlist)>0 and removelength>0:
-			if removelength>=exonlist[0][2]-10:
-				removelength-=exonlist[0][2]
-				deletedlen+=exonlist[0][2]
-				exonlist=exonlist[1:]
+		while len(exonlist) > 0 and removelength > 0:
+			if removelength >= exonlist[0][2]:
+				removelength -= exonlist[0][2]
+				deletedlen += exonlist[0][2]
+				exonlist = exonlist[1:]
 				continue
-			exonlist[0]=[exonlist[0][0]+removelength,exonlist[0][1],exonlist[0][2]-removelength,exonlist[0][3]]
-			deletedlen+=removelength
-			removelength=0
-		if exonlist==[]:
+			exonlist[0] = [exonlist[0][0] + removelength, exonlist[0][1], exonlist[0][2] - removelength, exonlist[0][3]]
+			deletedlen += removelength
+			removelength = 0
+		if exonlist == []:
 			return []
-		readinfo=[oldreadinfo[0],exonlist[0][0],oldreadinfo[2],oldreadinfo[3],oldreadinfo[4],oldreadinfo[5],oldreadinfo[6],exonlist[0][3],oldreadinfo[8],exonlist,oldreadinfo[10]]
+		readinfo = [oldreadinfo[0],
+					exonlist[0][0],
+					oldreadinfo[2],
+					oldreadinfo[3],
+					oldreadinfo[4],
+					oldreadinfo[5],
+					oldreadinfo[6],
+					oldreadinfo[7],
+					exonlist[0][3],
+					oldreadinfo[9],
+					exonlist,
+					oldreadinfo[11],
+					oldreadinfo[12],
+					oldreadinfo[13],
+					oldreadinfo[14],
+					oldreadinfo[15]]
 	return readinfo
 
-###
-###
-###
-def get_splitgene(readinfo, side):
+def get_splitgene(readinfo: list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment]
+				) -> tuple[str, int]:
 	"""
 	Get the gene name and mapping length for a specific side of a split read.
 	
 	Args:
 		readinfo: Read information list
-		side: 'left' or 'right' - which side of the read to analyze
 		
 	Returns:
-		list: [gene_name, mapping_length]
+		tuple: (gene_name, mapping_length)
 			- gene_name (str): Name of the identified gene (empty string if none)
 			- mapping_length (int): Total length of exons mapped to this gene
 	"""
@@ -572,27 +548,29 @@ def get_splitgene(readinfo, side):
 	maplen = 0
 	exonlist = readinfo[10]  # overlapped_segments: [[start, end, length, gene_list], ...]
 	
-	if side == 'right':
-		exonlist = exonlist[::-1]  # Reverse for right side
 	
 	if len(exonlist) == 0:
-		return ['', 0]
+		return ('', 0)
 	
 	# Get genes from the first segment (leftmost or rightmost depending on side)
-	allcandigene = exonlist[0][3] if exonlist[0][3] else []
+	allcandigene = set()
+	for exon in exonlist:
+		allcandigene.update(exon[3])
+	allcandigene = list(allcandigene)
 	
 	if len(allcandigene) == 0:
-		return ['', 0]
-	
+		return ('', 0)
+		
+	# Single candidate gene
 	if len(allcandigene) == 1:
-		genename = allcandigene[0]
+		genename = list(allcandigene)[0]
 		if genename == '':
-			return [genename, 0]
+			return (genename, 0)
 		# Calculate total mapping length for this gene
 		for exon in exonlist:
-			if genename in (exon[3] if exon[3] else []):
+			if genename in exon[3]:
 				maplen += exon[2]
-		return [genename, maplen]
+		return (genename, maplen)
 	
 	# Multiple candidate genes - find the one with longest mapping length
 	genemaplen = {}
@@ -600,7 +578,7 @@ def get_splitgene(readinfo, side):
 		genemaplen[candigene] = 0
 	
 	for exon in exonlist:
-		exon_genes = exon[3] if exon[3] else []
+		exon_genes = exon[3]
 		for candigene in allcandigene:
 			if candigene in exon_genes:
 				genemaplen[candigene] += exon[2]
@@ -615,95 +593,160 @@ def get_splitgene(readinfo, side):
 	
 	genename = longestgene
 	maplen = genemaplen[genename]
-	return [genename, maplen]
+	return (genename, maplen)
 
-def get_fusion_from_readpair(read1, read2):
+def get_fusion_readpair(read1: list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment], 
+						read2: list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment]
+						) -> list[str, str, str, str, int, int, int, str, list[int], int, int] | None:
 	"""
-	Detect fusion signals from a read pair
+	Get fusion events from a pair of same read alignments
 	Args:
-		read1: The first read
-		read2: The second read
+		read1: A list of read information
+		read2: A list of read information
 	Returns:
-		A list of fusion signals
-	Example:
-		read1 = [chrom, start, end, read_name, strand, cigar_info, mapq, left_gene, right_gene, exon_info, sequence, quality]
-		read2 = [chrom, start, end, read_name, strand, cigar_info, mapq, left_gene, right_gene, exon_info, sequence, quality]
-		fusion = get_fusion_readpair(read1, read2)
+		A list of fusion events, or None if no fusion detected
 	"""
-	read1=list(read1)
-	read2=list(read2)
-	read1[5]=list(read1[5])
-	read2[5]=list(read2[5])
+	# readinfo structure:
+	# [0] chrom, [1] start, [2] end, [3] read_name, [4] strand, [5] has_sa,
+	# [6] general_alignment_info, [7] mapq, [8] left_gene_list, [9] right_gene_list,
+	# [10] overlapped_segments, [11] readsequence, [12] readquality, [13] nmrate, [14] simplecigar, [15] read object
 
-	candifusion=[]
-	if read1[4]=='-':
-		temp=read1[5][0]; read1[5][0]=read1[5][2]; read1[5][2]=temp
-	if read2[4]=='-':
-		temp=read2[5][0];read2[5][0]=read2[5][2];read2[5][2]=temp
+	# adjust soft clipping length based on strand
+	if read1[4] == '-':
+		read1[6][0], read1[6][2] = read1[6][2], read1[6][0]
+	if read2[4] == '-':
+		read2[6][0], read2[6][2] = read2[6][2], read2[6][0]
 
-	if read1[5][0]<read2[5][0]:
-		leftread=read1
-		rightread=read2
-	else:
-		leftread=read2
-		rightread=read1
+	# Determine left/right reads by aligned position: left read is the one with smaller aligned position
+	if read1[6][0] < read2[6][0]:
+		leftread, rightread = read1, read2
+	else: # right read is the one with larger aligned position
+		leftread, rightread = read2, read1
 
-	gapsize=rightread[5][0]-leftread[5][0]-leftread[5][1]
+	# Calculate gap/overlap size: negative value indicates overlap
+	gapsize = rightread[6][0] - leftread[6][0] - leftread[6][1]
 
-	
-	if 0-gapsize > min(100,leftread[5][1]*0.5,rightread[5][1]*0.5):
-		return []
-	
-	if gapsize<-100:
-		
-		removelength=0-gapsize
-		if leftread[10]>rightread[10]:
-			if leftread[4]=='+':
-				leftread=remove_ovlp_exon(leftread,'right',removelength)
+	# Skip if two alignments are too overlapped
+	if 0 - gapsize > min(100, leftread[6][1] * 0.5, rightread[6][1] * 0.5):
+		with open(f"{outpath}log.txt", 'a') as fo:
+			fo.write(f"[WARNING] readpair {read1[3]} {read2[3]} too overlapped: {0 - gapsize} > {min(100, leftread[6][1] * 0.5, rightread[6][1] * 0.5)}\nIgnore this readpair.\n")
+		return None
+
+	# Handle significant overlaps
+	removelength = 0 - gapsize
+	if removelength > 20:
+		with open(f"{outpath}log.txt", 'a') as fo:
+			fo.write(f"[WARNING] readpair {read1[3]} {read2[3]} significant overlaps: {removelength} > 20. Trimming the overlapped exons. ")
+			fo.write(f"This function is under experiment and may make ambiguous breakpoints. Please raise an issue if you meet any problem.\n")
+			if leftread[7] < rightread[7]:  # Compare mapping quality
+				if leftread[4] == '+':
+					fo.write(f"Trimming the overlapped exons on the right side of {leftread[3]}.\n")
+					leftread = remove_ovlp_exon(leftread, 'right', removelength)
+				else:
+					fo.write(f"Trimming the overlapped exons on the left side of {leftread[3]}.\n")
+					leftread = remove_ovlp_exon(leftread, 'left', removelength)
 			else:
-				leftread=remove_ovlp_exon(leftread,'left',removelength)
-		else:
-			if rightread[4]=='+':
-				rightread=remove_ovlp_exon(rightread,'left',removelength)
-			else:
-				rightread=remove_ovlp_exon(rightread,'right',removelength)
+				if rightread[4] == '+':
+					fo.write(f"Trimming the overlapped exons on the left side of {rightread[3]}.\n")
+					rightread = remove_ovlp_exon(rightread, 'left', removelength)
+				else:
+					fo.write(f"Trimming the overlapped exons on the right side of {rightread[3]}.\n")
+					rightread = remove_ovlp_exon(rightread, 'right', removelength)
 
-	if leftread==[] or rightread==[]:
+	if not leftread or not rightread:
 		return []
 
-	if leftread[4]=='+':
-		chrom1=leftread[0]
-		bp1=leftread[2]
-		[gene1,maplen1]=get_splitgene(leftread,'right')
+	# Identify breakpoint genes (left side)
+	if leftread[4] == '+':
+		chrom1, bp1 = leftread[0], leftread[2]
 	else:
-		chrom1=leftread[0]
-		bp1=leftread[1]
-		[gene1,maplen1]=get_splitgene(leftread,'left')
+		chrom1, bp1 = leftread[0], leftread[1]
 
-
-	if rightread[4]=='+':
-		chrom2=rightread[0]
-		bp2=rightread[1]
-		[gene2,maplen2]=get_splitgene(rightread,'left')
+	# Identify breakpoint genes (right side)
+	if rightread[4] == '+':
+		chrom2, bp2 = rightread[0], rightread[1]
 	else:
-		chrom2=rightread[0]
-		bp2=rightread[2]
-		[gene2,maplen2]=get_splitgene(rightread,'right')
+		chrom2, bp2 = rightread[0], rightread[2]
 
-	if gene1 =='' or gene2=='' or gene1==gene2 or maplen1<100 or maplen2<100:
-		return []
+	gene1, maplen1 = get_splitgene(leftread)
+	gene2, maplen2 = get_splitgene(rightread)
 
+    # not confident fusion event
+	if not gene1 or not gene2 or gene1 == gene2 or maplen1 < 100 or maplen2 < 100:
+		return None
 
-	if chrom1<chrom2:
-		candifusion=[gene1,gene2,'splitread',chrom1,bp1,chrom2,bp2,read1[3],[leftread[6],rightread[6]],maplen1,maplen2,gapsize]
-	elif chrom2<chrom1:
-		candifusion=[gene2,gene1,'splitread',chrom2,bp2,chrom1,bp1,read1[3],[rightread[6],leftread[6]],maplen2,maplen1,gapsize]
+    # Standardize output order: chrom1 < chrom2
+	if read1[4] == gene2strand[gene1]:
+		fusion_event = [gene1, gene2, 'splitread', chrom1, bp1, chrom2, bp2, 
+					read1[3], [leftread[7], rightread[7]], maplen1, maplen2, gapsize]
 	else:
-		if bp1<bp2:
-			candifusion=[gene1,gene2,'splitread',chrom1,bp1,chrom2,bp2,read1[3],[leftread[6],rightread[6]],maplen1,maplen2,gapsize]
-		else:
-			candifusion=[gene2,gene1,'splitread',chrom2,bp2,chrom1,bp1,read1[3],[rightread[6],leftread[6]],maplen2,maplen1,gapsize]
+		fusion_event = [gene2, gene1, 'splitread', chrom2, bp2, chrom1, bp1, 
+					read1[3], [rightread[7], leftread[7]], maplen2, maplen1, gapsize]
+
+	return fusion_event
 
 
-	return [candifusion]
+def get_fusion_sameread(sameread: list[list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment]]
+						) -> list[list[str, str, str, str, int, int, int, str, list[int], int, int]] | None:
+	"""
+	Get fusion events from a list of same read alignments
+	Args:
+		sameread: A list of same read alignments
+	Returns:
+		A list of fusion events, or None if no fusion detected
+	"""
+	fusion_events = []
+	for i in range(len(sameread) - 1):
+		for j in range(i+1, len(sameread)):
+			pair_result = get_fusion_readpair(sameread[i], sameread[j])
+			if pair_result is not None:
+				fusion_events.append(pair_result)
+	return fusion_events
 
+"""
+Entry: reanalyze supplementary alignment
+"""
+def reanalyze_supplementary_alignment(bampath: str, 
+									  outpath: str,
+									  read_name: str,
+									  read_pos_list: list[list[str, int, int]]
+									  ) -> int:
+	"""
+	Reanalyze supplementary alignment
+	Args:
+		bampath: Path to input BAM file
+		outpath: Output directory path
+		read_name: Read name
+		read_pos_list: List of read position
+	Returns:
+		int: Returns 0 on success
+	"""
+	bam = pysam.AlignmentFile(bampath, 'rb')
+	sa_read_info = []
+	for chrom, start, end in read_pos_list:
+		candidate_reads = bam.fetch(chrom, start, end)
+		for read in candidate_reads:
+			if read.query_name != read_name or read.is_secondary:
+				continue
+
+			read_info = stat_read_info(read, is_record_readseq = True)
+			if read_info is not None:  # Filter out None values
+				sa_read_info.append(read_info)
+	
+	if len(sa_read_info) < 2:
+		with open(f"{outpath}log.txt", 'a') as fo:
+			fo.write(f"[WARNING] less than 2 alignments found for read {read_name} at {chrom}:{start}-{end}\n")
+		return 0
+	
+	fusion_events = get_fusion_sameread(sa_read_info)
+
+	if fusion_events:
+		with open(f"{outpath}rawsignal.txt", 'a') as fo:  # Append mode to avoid overwriting
+			for c in fusion_events:
+				# Format: gene1, gene2, 'splitread', chrom1, bp1, chrom2, bp2, read_name, mapq, maplen1, maplen2, gapsize
+				mapq_str = ','.join(str(q) for q in c[8])
+				fo.write(
+					f"{c[0]}\t{c[1]}\t{c[2]}\t{c[3]}\t{c[4]}\t{c[5]}\t{c[6]}\t{c[7]}\t{mapq_str}\t{c[9]}\t{c[10]}\t{c[11]}\n"
+				)
+
+	return 0

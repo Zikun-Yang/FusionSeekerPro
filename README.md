@@ -74,10 +74,11 @@ export PATH=$PWD:$PATH
 ```
 
 A test dataset is available to verify successful installation:
+```sh
+fusionseekerpro --bam testdata/test.bam  -o test_out/ --datatype isoseq --ref testdata/test.fa.gz --keepfile
+# or run the test.sh script directly
 ```
-fusionseekerpro --bam testdata/test.bam  -o test_out/ --datatype isoseq --ref testdata/test.fa.gz
-```
-Output should be identical to confident_genefusion.txt and confident_genefusion_transcript_sequence.fa in the testdata folder, with 1 gene fusion and its transcript sequence. 
+Output should be identical to confident_genefusion.txt and confident_genefusion_transcript_sequence.fa in the testdata/ folder (except the order of the supporting reads), with 1 gene fusion and its transcript sequence. 
 
 ## <a name="usage"></a> Usage
 
@@ -104,8 +105,7 @@ optional arguments:
                         Maximal distance to cluster raw signals [20 for isoseq, 40 for nanopore]
   --keepfile            Keep intermediate files [False]
   --thread THREAD       Number of threads [8]
-
-
+  --windowsize WIN      WindowSize for task splitting [10000000]
 ```
 
 FusionSeekerPro requires a input of read alignment results in BAM format sorted by coordinates. If you start with sequencing reads (Fasta or Fastq format), you may use minimap2 and samtools to map them to a reference genome before you can apply FusionSeekerPro:
@@ -119,16 +119,16 @@ samtools index nanopore.bam
 ```
 
 FusionSeekerPro can be applied with built-in Human reference genome (hg38) and annotation (Ensembl v104):
-```
+```sh
 fusionseekerpro --bam isoseq.bam --datatype isoseq -o fusionseekerpro_out/
 ```
 Or with custom reference genome and annotation (Make sure the chromosome name in both files are identical to those in BAM file):
-```
+```sh
 fusionseekerpro --bam nanopore.bam  --datatype nanopore  -o fusionseekerpro_out/ --gtf annotation.gtf --ref reference.fa
 ```
 
 By default, FusionSeekerPro uses only gene records with valid "gene_name" in the GTF file. To include all genes in the GTF file, use Gene ID instead:
-```
+```sh
 fusionseekerpro --bam isoseq.bam --datatype isoseq -o fusionseekerpro_out/ --geneid 
 ```
 
@@ -137,7 +137,7 @@ fusionseekerpro --bam isoseq.bam --datatype isoseq -o fusionseekerpro_out/ --gen
 #### 1. --minsupp, minimal number of supporting reads
 --min_supp is the most important argument for gene fusion candidate filtering of FusionSeekerPro. It is used to remove false-positive signals generated during sequencing or read alignment processes.
 By default, FusionSeekerPro estimates the volumn of noise signals from input dataset to assign a resonable --minsupp. If you find number of gene fusions is too few under default settings, you can speficy a lower --minsupp cutoff to allow in more candidates:
-```
+```sh
 fusionseekerpro --bam isoseq.bam --datatype isoseq -o test_out/ --minsupp 5 
 ```
 It is not suggested to set a --minsupp below 3, unless the sequencing depth of input dataset is extremely low.
@@ -146,7 +146,7 @@ It is not suggested to set a --minsupp below 3, unless the sequencing depth of i
 This option adjusts max distance cutoff used for clustering gene fusion raw signals. By default, FusionSeekerPro sets 20 for highly accurate reads (IsoSeq) and 40 for noisy reads (Nanopore).
 you can set a larger value of --maxdistance to tolerate more shifts in the breakpoint positions of raw signals:
 
-```
+```sh
 fusionseekerpro --bam isoseq.bam --datatype isoseq -o test_out/ --maxdistance 100
 ```
 
@@ -154,7 +154,7 @@ fusionseekerpro --bam isoseq.bam --datatype isoseq -o test_out/ --maxdistance 10
 Input reference genome allows FusionSeekerPro to align transcript sequences and refine breakpoint positions of confident gene fusion calls. Make sure to provide the same reference file used for read alignment.
 By default, FusionSeekerPro does NOT refine breakpoint positions when no reference genome is provided. 
 (minimap2(>=2.24) is required to map transcript sequences to the reference.)
-```
+```sh
 fusionseekerpro --bam isoseq.bam --datatype isoseq -o test_out/  --ref reference.fa
 ```
 

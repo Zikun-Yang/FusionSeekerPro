@@ -70,6 +70,16 @@ def create(gtfinfo: Dict[str, List[str]],
 			writedata: bool = False) -> dict[str, list[list[int, int, str, str, list[list[int, int]]]]]:
 	"""
     Construct gene info from GTF file
+
+	Args:
+		gtfinfo: GTF file info
+		chrom_valid: Valid chromosomes
+		use_geneid: If True, use gene_id; otherwise use gene_name or gene
+		outpath: Output path
+		writedata: If True, write gene info to file
+	Returns:
+		geneinfo: Gene info,
+		[1] start position [2] end position [3] gene name [4] strand [5] exon positions
 	"""
 	geneinfo = {}
 	log_messages = []  # Collect log messages for batch writing

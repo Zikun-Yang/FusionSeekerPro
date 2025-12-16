@@ -110,7 +110,7 @@ def merge_cluster(cluster: list[str],
 	bp2 = bp2[0]
 
 	quality = [int(q[8]) for q in signal_list]
-	quality = int(int(sum(quality)/len(signal_list)/2))
+	quality = int(sum(quality)/len(quality))
 	reads = ','.join([c[7] for c in signal_list])
 	numsupp = len(set([c[7] for c in signal_list]))
 	merged_signal = [s1[0], s1[1], numsupp, s1[3], bp1, s1[5], bp2, quality, reads] # gene1, gene2, numsupp, chrom1, bp1, chrom2, bp2, quality, reads
@@ -186,7 +186,11 @@ def cluster_bp(outpath: str, maxdistance: int, min_supp: int | None) -> int:
 		ss = signal.split('\t')
 		ss[4] = int(ss[4])
 		ss[6] = int(ss[6])
-		ss[8] = int(ss[8])
+		if ',' in ss[8]:
+			ss[8] = [int(q) for q in ss[8].split(',')]
+			ss[8] = int(sum(ss[8])/len(ss[8]))
+		else:
+			ss[8] = int(ss[8])
 		ss[9] = int(ss[9])
 		ss[10] = int(ss[10])
 		ss[11] = int(ss[11])

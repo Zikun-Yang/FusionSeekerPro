@@ -136,14 +136,23 @@ def main():
 	"""
 	Step 1: Construct gene info
 	"""
+	# [0] start position [1] end position [2] gene name [3] strand [4] exon positions
 	geneinfo = construct_gtf.create(gtfinfo, chrom_valid, args.geneid, args.outpath, writedata = True)
+	
+	# Create gene2strand mapping
+	gene2strand = {}
+	for chrom in geneinfo:
+		for gene in geneinfo[chrom]:
+			gene2strand[gene[2]] = gene[3]
 
 	"""
 	Step 2: Raw signal detection
 	"""
 	stat_split_reads.geneinfo = geneinfo
+	stat_split_reads.gene2strand = gene2strand  # Set as module-level variable for multiprocessing
 	os.makedirs(args.outpath+'raw_signal/', exist_ok=True)
-
+	
+	# 2a. compute raw signal from each read
 	results = []
 	genomic_regions = create_genomic_regions(bamfile, chrom_valid, args.windowsize)
 	with open(args.outpath+'log.txt', 'a') as logfile:
@@ -153,6 +162,35 @@ def main():
 	for chrom, start, end in genomic_regions:
 		res = pool.apply_async(stat_split_reads.get_split_reads,
 								args=(f'{args.outpath}filtered.bam', args.outpath, chrom, start, end))
+		results.append(res)
+	pool.close()
+	for res in results:
+		try:
+			res.get() # there will be error if the child process fails
+		except Exception as e:
+			with open(args.outpath+'log.txt', 'a') as logfile:
+				logfile.write(f"[ERROR] Error in worker process: {e}\n")
+			raise Exception(f"Error in worker process: {e}")
+	pool.join()
+
+	# 2b. reanalyze raw signal from reads with supplementary alignments
+	supplementary_read_info = {}
+	for chrom, start, end in genomic_regions:
+		with open(f"{args.outpath}raw_signal/multigene_read_{chrom}_{start}_{end}.txt", 'r') as fi:
+			for line in fi:
+				if line.startswith('chrom'):
+					continue
+				readinfo = line.strip().split('\t') # chrom, start, end, read_name, strand, is_supplementary, general_alignment_info, mapq, nmrate, left_gene, right_gene, exon_info, cigar, sequence, quality
+				readinfo[1], readinfo[2], readinfo[5] = int(readinfo[1]), int(readinfo[2]), bool(readinfo[5])
+				if readinfo[5]: # is supplementary alignment
+					if readinfo[3] not in supplementary_read_info.keys():
+						supplementary_read_info[readinfo[3]] = []
+					supplementary_read_info[readinfo[3]].append(readinfo[0:3])
+
+	pool = Pool(args.thread)
+	for read_name, read_pos_list in supplementary_read_info.items():
+		res = pool.apply_async(stat_split_reads.reanalyze_supplementary_alignment,
+								args=(args.bam, args.outpath, read_name, read_pos_list))
 		results.append(res)
 	pool.close()
 	for res in results:

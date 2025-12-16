@@ -13,7 +13,7 @@ def poa_all(outpath: str, genomic_regions: list[tuple[str, int, int]]) -> int:
 	confident_genefusion = []
 	with open(outpath + 'confident_genefusion.txt', 'r') as fi:
 		for line in fi:
-			if "gene1" in line:
+			if line.startswith('gene1'):
 				continue
 			confident_genefusion.append(line.strip().split('\t'))
 
@@ -28,9 +28,9 @@ def poa_all(outpath: str, genomic_regions: list[tuple[str, int, int]]) -> int:
 		multigene_read_info = []
 		with open(f'{outpath}raw_signal/multigene_read_{chrom}_{start}_{end}.txt', 'r') as fi:
 			for line in fi:
-				if "chrom" in line:
+				if line.startswith('chrom'):
 					continue
-				multigene_read_info.append(line.strip().split('\t'))
+				multigene_read_info.append(line.strip('\n').split('\t'))
 		for readinfo in multigene_read_info:
 			if readinfo[3] in supporting_reads and readinfo[13] != '':
 				allreadseq[readinfo[3]] = (readinfo[13], readinfo[14]) # (sequence, quality)
@@ -71,7 +71,7 @@ def polish_bp(outpath: str, genomic_regions: list[tuple[str, int, int]], referen
 	gfinfo = {}
 	with open(f'{outpath}confident_genefusion.txt', 'r') as fi:
 		for line in fi:
-			if "gene1" in line:
+			if line.startswith('gene1'):
 				continue
 			ll = line.strip().split('\t') # [Gene1, Gene2, NumSupp, Chrom1, Breakpoint1, Chrom2, Breakpoint2, ID, SupportingReads]
 			confident_genefusion.append(ll)
@@ -97,7 +97,7 @@ def polish_bp(outpath: str, genomic_regions: list[tuple[str, int, int]], referen
 		# update
 		with open(f"{outpath}align_workspace/rawsignal.txt", "r") as fi:
 			for line in fi:
-				if "gene1" in line:
+				if line.startswith('gene1'):
 					continue
 				ll = line.strip().split('\t') # [Gene1, Gene2, splitread, chrom1, bp1, chrom2, bp2, read_name, mapq, maplen1, maplen2, gapsize]
 				_, _, id, gene1, gene2, chrom1, bp1, chrom2, bp2 = ll[7].split("_") # poa_ctg_ID_gene1_gene2_chrom1_bp1_chrom2_bp2
