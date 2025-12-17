@@ -595,12 +595,14 @@ def get_splitgene(readinfo: list[str, int, int, str, str, bool, list[int], int, 
 	maplen = genemaplen[genename]
 	return (genename, maplen)
 
-def get_fusion_readpair(read1: list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment], 
+def get_fusion_readpair(outpath: str,
+						read1: list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment], 
 						read2: list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment]
 						) -> list[str, str, str, str, int, int, int, str, list[int], int, int] | None:
 	"""
 	Get fusion events from a pair of same read alignments
 	Args:
+		outpath: Output directory path
 		read1: A list of read information
 		read2: A list of read information
 	Returns:
@@ -686,11 +688,13 @@ def get_fusion_readpair(read1: list[str, int, int, str, str, bool, list[int], in
 	return fusion_event
 
 
-def get_fusion_sameread(sameread: list[list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment]]
+def get_fusion_sameread(outpath: str,
+						sameread: list[list[str, int, int, str, str, bool, list[int], int, list[str], list[str], list[list[int, int, int, list[str]]], str, str, float, str, pysam.AlignedSegment]]
 						) -> list[list[str, str, str, str, int, int, int, str, list[int], int, int]] | None:
 	"""
 	Get fusion events from a list of same read alignments
 	Args:
+		outpath: Output directory path
 		sameread: A list of same read alignments
 	Returns:
 		A list of fusion events, or None if no fusion detected
@@ -698,7 +702,7 @@ def get_fusion_sameread(sameread: list[list[str, int, int, str, str, bool, list[
 	fusion_events = []
 	for i in range(len(sameread) - 1):
 		for j in range(i+1, len(sameread)):
-			pair_result = get_fusion_readpair(sameread[i], sameread[j])
+			pair_result = get_fusion_readpair(outpath, sameread[i], sameread[j])
 			if pair_result is not None:
 				fusion_events.append(pair_result)
 	return fusion_events
@@ -738,7 +742,7 @@ def reanalyze_supplementary_alignment(bampath: str,
 			fo.write(f"[WARNING] less than 2 alignments found for read {read_name} at {chrom}:{start}-{end}\n")
 		return 0
 	
-	fusion_events = get_fusion_sameread(sa_read_info)
+	fusion_events = get_fusion_sameread(outpath, sa_read_info)
 
 	if fusion_events:
 		with open(f"{outpath}rawsignal.txt", 'a') as fo:  # Append mode to avoid overwriting
