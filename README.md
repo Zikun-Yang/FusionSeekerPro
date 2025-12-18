@@ -1,6 +1,6 @@
-# FusionSeeker
+# FusionSeekerPro
 
-A advanced gene fusion caller for long-read single-molecular sequencing data. It is modified from the [FusionSeeker](https://github.com/Maggi-Chen/FusionSeeker) and can better call the fusion events. See [Differences between FusionSeekerPro and FusionSeeker?](#difference) for details.
+A advanced gene fusion caller for long-read single-molecular sequencing data. It is modified from the [FusionSeeker](https://github.com/Maggi-Chen/FusionSeeker) and can better call the fusion events with user friendly outputs. See [Differences between FusionSeekerPro and FusionSeeker?](#difference) for details.
 
 Authors: [Zikun Yang](https://github.com/Zikun-Yang), [Maggi Chen](https://github.com/Maggi-Chen) (author of FusionSeeker)
 
@@ -13,6 +13,7 @@ Authors: [Zikun Yang](https://github.com/Zikun-Yang), [Maggi Chen](https://githu
 - [Usage](#usage)
 - [Parameters](#parameters)
 - [Outputs](#outputs)
+- [Limitations](#limitations)
 - [Getting Help](#help)
 - [Citing FusionSeekerPro](#cite)
 
@@ -39,7 +40,8 @@ When using custom reference, make sure the chromosome name in BAM, GTF, and refe
 * reorganized code strcutures, descriptions of funstions and documents
 * fixed some known bugs in FusionSeeker
 * added bam preprocessing modules that only keep reads aligned to multiple genes. This can shorten the running time
-* changed the multiprocessing manner, split the reads by genomic windows rather than chromosomes. This can
+* changed the multiprocessing manner, split the reads by genomic windows rather than chromosomes. This can avoid task stuck on the longest chromosome
+* made some minor improvements: added progress bar to visualize the processing; added parameter --redo; added parameter --skipsupplementary
 
 ## <a name="install"></a> Installation
 
@@ -106,6 +108,8 @@ optional arguments:
   --keepfile            Keep intermediate files [False]
   --thread THREAD       Number of threads [8]
   --windowsize WIN      WindowSize for task splitting [10000000]
+  --redo                redo all the steps without checking the existing results [False]
+  --skipsupplementary   skip analysis of supplementary alignments, this will ignore fusion events from remote gene pairs [False]
 ```
 
 FusionSeekerPro requires a input of read alignment results in BAM format sorted by coordinates. If you start with sequencing reads (Fasta or Fastq format), you may use minimap2 and samtools to map them to a reference genome before you can apply FusionSeekerPro:
@@ -127,7 +131,7 @@ Or with custom reference genome and annotation (Make sure the chromosome name in
 fusionseekerpro --bam nanopore.bam  --datatype nanopore  -o fusionseekerpro_out/ --gtf annotation.gtf --ref reference.fa
 ```
 
-By default, FusionSeekerPro uses only gene records with valid "gene_name" in the GTF file. To include all genes in the GTF file, use Gene ID instead:
+By default, FusionSeekerPro uses only gene records with valid "gene_name" or "gene" in the GTF file. To include all genes in the GTF file, use Gene ID instead:
 ```sh
 fusionseekerpro --bam isoseq.bam --datatype isoseq -o fusionseekerpro_out/ --geneid 
 ```
@@ -138,7 +142,7 @@ fusionseekerpro --bam isoseq.bam --datatype isoseq -o fusionseekerpro_out/ --gen
 --min_supp is the most important argument for gene fusion candidate filtering of FusionSeekerPro. It is used to remove false-positive signals generated during sequencing or read alignment processes.
 By default, FusionSeekerPro estimates the volumn of noise signals from input dataset to assign a resonable --minsupp. If you find number of gene fusions is too few under default settings, you can speficy a lower --minsupp cutoff to allow in more candidates:
 ```sh
-fusionseekerpro --bam isoseq.bam --datatype isoseq -o test_out/ --minsupp 5 
+fusionseekerpro --bam isoseq.bam --datatype isoseq -o test_out/ --minsupp 3
 ```
 It is not suggested to set a --minsupp below 3, unless the sequencing depth of input dataset is extremely low.
 
@@ -158,6 +162,11 @@ By default, FusionSeekerPro does NOT refine breakpoint positions when no referen
 fusionseekerpro --bam isoseq.bam --datatype isoseq -o test_out/  --ref reference.fa
 ```
 
+#### 4. --redo, redo all the steps without checking the existing results
+This option forces FusionSeekerPro to redo all the steps. By default, FusionSeekerPro does not redo all the steps.
+
+#### 5. --skipsupplementary, skip analysis of supplementary alignments, this will ignore fusion events from remote gene pairs [False]
+This option let FusionSeekerPro exclude reads only with supplementary alignments in the preprocessing process and skip the analysis of supplementary alignment reads, making a much smaller read set to analyze and speeding up the processing. If you only focus on the fusion events on reference genome, not the events due to structural variants in sample genome (e.g. in cancer), you can set this parameter. By default, FusionSeekerPro includes the supplementary alignments into analysis.
 
 ## <a name="outputs"></a> Outputs
 The output directory includes:
@@ -176,6 +185,10 @@ log.txt                                        Log file for debug.
 (raw_signal/                                   Intermediate files during raw signal detection. Removed by default.)
 (align_workspace/                              Intermediate files during transcript sequence          generation with bsalign poa. Removed by default.)
 ```
+
+## <a name="limitations"></a> Limitations
+* **Annotation-dependent fusion detection:** Fusion events reported by FusionSeekerPro rely on reference gene annotations. Pre-existing fused gene structures in the input GTF file will not be identified as novel events.
+* **Supplementary alignment handling:** Processing of heavily overlapped alignments in supplementary aligned read pairs remains under development, potentially leading to inaccurate fusion breakpoint calls.
 
 ## <a name="help"></a>Getting Help
 

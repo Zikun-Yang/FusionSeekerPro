@@ -12,6 +12,8 @@ import gzip
 import sys
 import os
 import setproctitle
+from tqdm import tqdm
+import time
 setproctitle.setproctitle("FusionSeekerPro")
 
 def parse_args() -> argparse.Namespace:
@@ -30,6 +32,8 @@ def parse_args() -> argparse.Namespace:
 
 	parser.add_argument('--maxdistance',type=int,default=False,help='Maximal distance to cluster raw signals [20 for isoseq, 40 for nanopore]')
 	parser.add_argument('--keepfile',action='store_true',default=False,help='Keep intermediate files [False]')
+	parser.add_argument('--redo',action='store_true',default=False,help='Redo the analysis from the beginning [False]')
+	parser.add_argument('--skipsupplementary',action='store_true',default=False,help='Skip the raw signal detection of supplementary alignments [False]')
 	parser.add_argument('--thread',type=int,default=8,help='Number of threads [8]')
 	parser.add_argument('--windowsize',type=int,default=10000000,help='Window size for task splitting [1000000]')
 
@@ -63,13 +67,13 @@ def main():
 	# create output directory
 	if args.outpath[-1] != '/':
 		args.outpath += '/'
-	if os.path.exists(args.outpath):
+	if os.path.exists(args.outpath) and args.redo:
 		os.system('rm -rf ' + args.outpath)
-	os.makedirs(args.outpath)
+	os.makedirs(args.outpath, exist_ok=True)
 
 	# write log file
 	with open(args.outpath+'log.txt', 'w') as logfile:
-		logfile.write('[INFO] Start calling gene fusions from '+args.bam+'...\n')
+		logfile.write(f'[INFO] Start calling gene fusions from {args.bam}...\n')
 
 	# check datatype
 	if args.datatype not in ['isoseq', 'nanopore']:
@@ -131,7 +135,13 @@ def main():
 	"""
 	Step 0: Extract multi-gene reads
 	"""
-	extract_multigene_read.extract_multigene_read(args.bam, args.gtf, args.outpath)
+	if not os.path.exists(args.outpath + 'filtered.bam') or args.redo:
+		extract_multigene_read.extract_multigene_read(args.bam, args.gtf, args.outpath, args.skipsupplementary)
+		print("Multigene reads extracted.")
+	else:
+		print("Multigene reads already extracted. Skipping.")
+		with open(args.outpath + 'log.txt', 'a') as logfile:
+			logfile.write('[INFO] Multigene reads already extracted. Skipping.\n')
 
 	"""
 	Step 1: Construct gene info
@@ -144,107 +154,179 @@ def main():
 	for chrom in geneinfo:
 		for gene in geneinfo[chrom]:
 			gene2strand[gene[2]] = gene[3]
+	print("Gene info constructed.")
 
 	"""
 	Step 2: Raw signal detection
 	"""
 	stat_split_reads.geneinfo = geneinfo
 	stat_split_reads.gene2strand = gene2strand  # Set as module-level variable for multiprocessing
-	os.makedirs(args.outpath+'raw_signal/', exist_ok=True)
-	
-	# 2a. compute raw signal from each read
-	results = []
 	genomic_regions = create_genomic_regions(bamfile, chrom_valid, args.windowsize)
-	with open(args.outpath+'log.txt', 'a') as logfile:
-		logfile.write(f'[INFO] {len(genomic_regions)} genomic regions created (window size: {args.windowsize/1e6} Mbp).\n')
+	print("Genomic regions created.")
 
-	pool = Pool(args.thread)
-	for chrom, start, end in genomic_regions:
-		res = pool.apply_async(stat_split_reads.get_split_reads,
-								args=(f'{args.outpath}filtered.bam', args.outpath, chrom, start, end))
-		results.append(res)
-	pool.close()
-	for res in results:
-		try:
-			res.get() # there will be error if the child process fails
-		except Exception as e:
-			with open(args.outpath+'log.txt', 'a') as logfile:
-				logfile.write(f"[ERROR] Error in worker process: {e}\n")
-			raise Exception(f"Error in worker process: {e}")
-	pool.join()
+	# 2a. compute raw signal from each read
+	if not os.path.exists(args.outpath+'raw_signal/') or not os.path.exists(args.outpath+'rawsignal.txt') or args.redo:
+		os.makedirs(args.outpath+'raw_signal/', exist_ok=True)
+		results = []
+		with open(args.outpath+'log.txt', 'a') as logfile:
+			logfile.write(f'[INFO] {len(genomic_regions)} genomic regions created (window size: {args.windowsize/1e6} Mbp).\n')
 
-	# 2b. reanalyze raw signal from reads with supplementary alignments
-	supplementary_read_info = {}
-	for chrom, start, end in genomic_regions:
-		with open(f"{args.outpath}raw_signal/multigene_read_{chrom}_{start}_{end}.txt", 'r') as fi:
-			for line in fi:
-				if line.startswith('chrom'):
-					continue
-				readinfo = line.strip().split('\t') # chrom, start, end, read_name, strand, is_supplementary, general_alignment_info, mapq, nmrate, left_gene, right_gene, exon_info, cigar, sequence, quality
-				readinfo[1], readinfo[2], readinfo[5] = int(readinfo[1]), int(readinfo[2]), bool(readinfo[5])
-				if readinfo[5]: # is supplementary alignment
-					if readinfo[3] not in supplementary_read_info.keys():
-						supplementary_read_info[readinfo[3]] = []
-					supplementary_read_info[readinfo[3]].append(readinfo[0:3])
+		pool = Pool(args.thread)
+		for chrom, start, end in genomic_regions:
+			res = pool.apply_async(stat_split_reads.get_split_reads,
+									args=(f'{args.outpath}filtered.bam', args.outpath, chrom, start, end))
+			results.append(res)
+		pool.close()
+		"""
+		for res in results:
+			try:
+				res.get() # there will be error if the child process fails
+			except Exception as e:
+				with open(args.outpath+'log.txt', 'a') as logfile:
+					logfile.write(f"[ERROR] Error in worker process: {e}\n")
+				raise Exception(f"Error in worker process: {e}")
+		"""
+		
+		# Use tqdm to show progress - process completed tasks first for real-time updates
+		completed = set()
+		with tqdm(total=len(genomic_regions), desc="Processing genomic regions") as pbar:
+			while len(completed) < len(results):
+				found_completed = False
+				for i, res in enumerate(results):
+					if i not in completed and res.ready():
+						try:
+							res.get()  # Get result (may raise exception)
+							completed.add(i)
+							pbar.update(1)
+							found_completed = True
+						except Exception as e:
+							with open(args.outpath + 'log.txt', 'a') as logfile:
+								logfile.write(f"[ERROR] Error in worker process: {e}\n")
+							raise Exception(f"Error in worker process: {e}")
+				if not found_completed:
+					time.sleep(0.1)  # Avoid CPU spinning when no tasks are ready
 
-	pool = Pool(args.thread)
-	for read_name, read_pos_list in supplementary_read_info.items():
-		res = pool.apply_async(stat_split_reads.reanalyze_supplementary_alignment,
-								args=(args.bam, args.outpath, read_name, read_pos_list))
-		results.append(res)
-	pool.close()
-	for res in results:
-		try:
-			res.get() # there will be error if the child process fails
-		except Exception as e:
-			with open(args.outpath+'log.txt', 'a') as logfile:
-				logfile.write(f"[ERROR] Error in worker process: {e}\n")
-			raise Exception(f"Error in worker process: {e}")
-	pool.join()
+		pool.join()
 
-	with open(args.outpath + 'log.txt','a') as logfile:
-		logfile.write('[INFO] Raw signal detection done. Start clustering raw signals...\n')
+		# 2b. reanalyze raw signal from reads with supplementary alignments
+		if args.skipsupplementary:
+			print(f"Supplementary alignments skipped. Skipping. (To reanalyze the raw signal from reads with supplementary alignments, please use --skiprawsignal flag.)")
+			with open(args.outpath + 'log.txt','a') as logfile:
+				logfile.write('[INFO] Supplementary alignments skipped. Skipping.\n')
+		else:
+			supplementary_read_info = {}
+			for chrom, start, end in genomic_regions:
+				with open(f"{args.outpath}raw_signal/multigene_read_{chrom}_{start}_{end}.txt", 'r') as fi:
+					for line in fi:
+						if line.startswith('chrom'):
+							continue
+						readinfo = line.strip().split('\t') # chrom, start, end, read_name, strand, is_supplementary, general_alignment_info, mapq, nmrate, left_gene, right_gene, exon_info, cigar, sequence, quality
+						readinfo[1], readinfo[2], readinfo[5] = int(readinfo[1]), int(readinfo[2]), bool(readinfo[5])
+						if readinfo[5]: # is supplementary alignment
+							if readinfo[3] not in supplementary_read_info.keys():
+								supplementary_read_info[readinfo[3]] = []
+							supplementary_read_info[readinfo[3]].append(readinfo[0:3])
+
+			pool = Pool(args.thread)
+			results = []
+			for read_name, read_pos_list in supplementary_read_info.items():
+				res = pool.apply_async(stat_split_reads.reanalyze_supplementary_alignment,
+										args=(args.bam, args.outpath, read_name, read_pos_list))
+				results.append(res)
+			pool.close()
+		
+			"""
+			for res in results:
+				try:
+					res.get() # there will be error if the child process fails
+				except Exception as e:
+					with open(args.outpath+'log.txt', 'a') as logfile:
+						logfile.write(f"[ERROR] Error in worker process: {e}\n")
+					raise Exception(f"Error in worker process: {e}")
+			"""
+			
+			# Use tqdm to show progress - process completed tasks first for real-time updates
+			completed = set()
+			with tqdm(total=len(supplementary_read_info), desc="Reanalyzing supplementary alignments") as pbar:
+				while len(completed) < len(results):
+					found_completed = False
+					for i, res in enumerate(results):
+						if i not in completed and res.ready():
+							try:
+								res.get()  # Get result (may raise exception)
+								completed.add(i)
+								pbar.update(1)
+								found_completed = True
+							except Exception as e:
+								with open(args.outpath + 'log.txt', 'a') as logfile:
+									logfile.write(f"[ERROR] Error in worker process: {e}\n")
+								raise Exception(f"Error in worker process: {e}")
+					if not found_completed:
+						time.sleep(0.1)  # Avoid CPU spinning when no tasks are ready
+			pool.join()
+
+		print("Raw signal detection done.")
+		with open(args.outpath + 'log.txt','a') as logfile:
+			logfile.write('[INFO] Raw signal detection done. Start clustering raw signals...\n')
+
+	else:
+		print(f"Raw signal detection already done. Skipping. (To redo the raw signal detection, please use --redo flag.)")
+		with open(args.outpath + 'log.txt', 'a') as logfile:
+			logfile.write('[INFO] Raw signal detection already done. Skipping.\n')
 
 	"""
 	Step 3: Clustering raw signals
 	"""
-	cluster.cluster_bp(args.outpath, args.maxdistance, args.minsupp)
-	
-	with open(args.outpath + 'log.txt', 'a') as logfile:
-		logfile.write('[INFO] Raw signal clustering done. Start transcript sequence generation...\n')
+	if not os.path.exists(args.outpath+'confident_genefusion.txt') or args.redo:
+		cluster.cluster_bp(args.outpath, args.maxdistance, args.minsupp)
+		
+		print("Raw signal clustering done.")
+		with open(args.outpath + 'log.txt', 'a') as logfile:
+			logfile.write('[INFO] Raw signal clustering done. Start transcript sequence generation...\n')
+	else:
+		print(f"Raw signal clustering already done. Skipping. (To redo the raw signal clustering, please use --redo flag.)")
+		with open(args.outpath + 'log.txt', 'a') as logfile:
+			logfile.write('[INFO] Raw signal clustering already done. Skipping.\n')
 
 	"""
 	Step 4: Transcript sequence generation
 	"""
-	align.geneinfo = geneinfo
-	align.poa_all(args.outpath, genomic_regions)
-	with open(args.outpath+'log.txt','a') as logfile:
-		if args.ref:
-			try:
-				align.polish_bp(args.outpath, genomic_regions, args.ref, args.datatype, True)
-				logfile.write('[INFO] Transcript sequence generation done. Start polishing gene fusion breakpoints...\n')
-			except:
-				logfile.write('[WARNING] Transcript sequence generation failed.\n')
-				os.system(f'touch {args.outpath}confident_genefusion_transcript_sequence.fa')
-		else:
-			try:
-				align.polish_bp(args.outpath, genomic_regions, args.ref, args.datatype, False)
-				logfile.write('[INFO] Transcript sequence generation done.\n[WARNING] No reference genome provided. Skipping breakpoint polish. (To enable breakpoint polish, please provide reference genome file.)\n')
-			except:
-				logfile.write('[WARNING] Transcript sequence generation failed.\n')
-				os.system(f'touch {args.outpath}confident_genefusion_transcript_sequence.fa')
+	if not os.path.exists(args.outpath+'confident_genefusion_refined_transcript_sequence.fa') or args.redo:
+		align.geneinfo = geneinfo
+		align.poa_all(args.outpath, genomic_regions)
+		with open(args.outpath+'log.txt','a') as logfile:
+			if args.ref:
+				try:
+					align.polish_bp(args.outpath, genomic_regions, args.ref, args.datatype, True)
+					logfile.write('[INFO] Transcript sequence generation done. Start polishing gene fusion breakpoints...\n')
+				except Exception as e:
+					logfile.write(f'[WARNING] Transcript sequence generation failed: {e}\n')
+					os.system(f'touch {args.outpath}confident_genefusion_transcript_sequence.fa')
+			else:
+				try:
+					align.polish_bp(args.outpath, genomic_regions, args.ref, args.datatype, False)
+					logfile.write('[INFO] Transcript sequence generation done.\n[WARNING] No reference genome provided. Skipping breakpoint polish. (To enable breakpoint polish, please provide reference genome file.)\n')
+				except Exception as e:
+					logfile.write(f'[WARNING] Transcript sequence generation failed: {e}\n')
+					os.system(f'touch {args.outpath}confident_genefusion_transcript_sequence.fa')
 
-	logfile=open(args.outpath+'log.txt','a')
-	logfile.write('[INFO] Transcript sequence generation done.\n')
-	logfile.close()
+		print("Transcript sequence generation done.")
+		with open(args.outpath + 'log.txt','a') as logfile:
+			logfile.write('[INFO] Transcript sequence generation done.\n')
+	else:
+		print(f"Transcript sequence generation already done. Skipping. (To redo the transcript sequence generation, please use --redo flag.)")
+		with open(args.outpath + 'log.txt', 'a') as logfile:
+			logfile.write('[INFO] Transcript sequence generation already done. Skipping.\n')
 
-
+	# remove intermediate files
 	if not args.keepfile:
 		os.system(f'rm -r {args.outpath}align_workspace/')
 		os.system(f'rm -r {args.outpath}raw_signal/')
+		print("Intermediate files removed.")
 		with open(args.outpath + 'log.txt','a') as logfile:
 			logfile.write('[INFO] Intermediate files removed.\n')
 
+	print("All done. Bye.")
 	with open(args.outpath + 'log.txt','a') as logfile:
 		logfile.write('[INFO] Gene fusion detection done. Bye.\n')
 

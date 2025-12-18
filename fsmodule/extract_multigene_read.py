@@ -16,7 +16,7 @@ def extract_gene_id_from_gtf(gtf_interval):
                 return match.group(1)
     return '.'
 
-def extract_multigene_read(input_bam: str, input_gtf: str, output_path: str) -> None:
+def extract_multigene_read(input_bam: str, input_gtf: str, output_path: str, skipsupplementary: bool = False) -> None:
     """
     Filters a BAM file to retain only those alignments (reads) that overlap
     more than one unique gene feature defined in the GTF file.
@@ -56,34 +56,38 @@ def extract_multigene_read(input_bam: str, input_gtf: str, output_path: str) -> 
 
     # --- Step 2: Intersect reads with unique genes and count overlaps ---
     # split=True: Handle spliced alignments (required for Iso-seq/RNA-seq data)
-    intersect_results = pybedtools.BedTool(f"{output_path}temp.bam").intersect(
-        unique_genes_bed, wa=True, wb=True, split=True, bed=True
-    )
+    if skipsupplementary: # only keep primary alignments
+        intersect_results = pybedtools.BedTool(f"{output_path}temp.bam").intersect(
+            unique_genes_bed, wa=True, c=True, split=True, bed=True
+        )
 
-    read_to_genes = defaultdict(set)
-    for result in intersect_results:
-        read_name = result.name  # The name of the read (field 4)
-        gene_key = (result.fields[12], int(result.fields[13]), int(result.fields[14]))  # chr, start, end
-        read_to_genes[read_name].add(gene_key)
+        multi_overlap_read_names = set()
+    
+        # The output is a BED file where the last column (field 7) is the count.
+        # pybedtools results are 0-indexed lists of fields.
+        for read_overlap in intersect_results:
+            overlap_count = int(read_overlap.fields[-1]) # Last column is the count
+            if overlap_count > 1:
+                read_name = read_overlap.name # The name column (field 4)
+                multi_overlap_read_names.add(read_name)
 
-    # Count the number of unique genes overlapping for each read
-    multi_overlap_read_names = set()
-    for read_name, gene_set in read_to_genes.items():
-        if len(gene_set) >= 2:
-            multi_overlap_read_names.add(read_name)
-    
-    """
-    # --- Step 3: Filter for reads overlapping > 1 gene and collect names ---
-    multi_overlap_read_names = set()
-    
-    # The output is a BED file where the last column (field 7) is the count.
-    # pybedtools results are 0-indexed lists of fields.
-    for read_overlap in intersect_results:
-        overlap_count = int(read_overlap.fields[-1]) # Last column is the count
-        if overlap_count > 1:
-            read_name = read_overlap.name # The name column (field 4)
-            multi_overlap_read_names.add(read_name)
-    """
+
+    else: # keep primary and supplementary alignments
+        intersect_results = pybedtools.BedTool(f"{output_path}temp.bam").intersect(
+            unique_genes_bed, wa=True, wb=True, split=True, bed=True
+        )
+
+        read_to_genes = defaultdict(set)
+        for result in intersect_results:
+            read_name = result.name  # The name of the read (field 4)
+            gene_key = (result.fields[12], int(result.fields[13]), int(result.fields[14]))  # chr, start, end
+            read_to_genes[read_name].add(gene_key)
+
+        # Count the number of unique genes overlapping for each read
+        multi_overlap_read_names = set()
+        for read_name, gene_set in read_to_genes.items():
+            if len(gene_set) >= 2:
+                multi_overlap_read_names.add(read_name)
 
     read_count = len(multi_overlap_read_names)
     with open(f'{output_path}log.txt', 'a') as logfile:

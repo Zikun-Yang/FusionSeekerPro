@@ -1,6 +1,7 @@
 from errno import EILSEQ
 import pysam
 import os
+import copy
 
 gene2strand = {}
 geneinfo = {}
@@ -338,6 +339,9 @@ def get_fusion_within_read(readinfo:
 				gene1 = list(genes_only_in_seg1)[0]  # Could be improved to select best gene
 				gene2 = list(genes_only_in_seg2)[0]
 				
+				if gene2strand[gene1] != gene2strand[gene2]:
+					continue
+
 				# Skip if same gene
 				if gene1 == gene2:
 					continue
@@ -455,7 +459,8 @@ def remove_ovlp_exon(oldreadinfo: list[str, int, int, str, str, bool, list[int],
 		A list of read info
 	"""
 	readinfo = []
-	exonlist = oldreadinfo[11]
+	# create a deep copy of exonlist to avoid modifying the original data
+	exonlist = copy.deepcopy(oldreadinfo[11])
 	deletedlen = 0
 
 	inspos = oldreadinfo[12].split(',') # cigar string
@@ -479,11 +484,15 @@ def remove_ovlp_exon(oldreadinfo: list[str, int, int, str, str, bool, list[int],
 				removelength -= exonlist[-1][2]
 				deletedlen += exonlist[-1][2]
 				exonlist = exonlist[:-1]
+				# exit if exonlist is empty
+				if len(exonlist) == 0:
+					return []
 				continue
 			exonlist[-1] = [exonlist[-1][0], exonlist[-1][1] - removelength, exonlist[-1][2] - removelength, exonlist[-1][3]]
 			deletedlen += removelength
 			removelength = 0
-		if exonlist == []:
+		# check if exonlist is empty
+		if len(exonlist) == 0:
 			return []
 		readinfo = [oldreadinfo[0], 
 					oldreadinfo[1], 
@@ -507,11 +516,15 @@ def remove_ovlp_exon(oldreadinfo: list[str, int, int, str, str, bool, list[int],
 				removelength -= exonlist[0][2]
 				deletedlen += exonlist[0][2]
 				exonlist = exonlist[1:]
+				# exit if exonlist is empty
+				if len(exonlist) == 0:
+					return []
 				continue
 			exonlist[0] = [exonlist[0][0] + removelength, exonlist[0][1], exonlist[0][2] - removelength, exonlist[0][3]]
 			deletedlen += removelength
 			removelength = 0
-		if exonlist == []:
+		# check if exonlist is empty
+		if len(exonlist) == 0:
 			return []
 		readinfo = [oldreadinfo[0],
 					exonlist[0][0],

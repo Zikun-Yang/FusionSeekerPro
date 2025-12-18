@@ -9,7 +9,7 @@ def poa_all(outpath: str, genomic_regions: list[tuple[str, int, int]]) -> int:
 		outpath: str, the path to the output directory
 		chrom_valid: list[str], the list of valid chromosomes
 	"""
-	os.mkdir(outpath + 'align_workspace/')
+	os.makedirs(outpath + 'align_workspace/', exist_ok=True)
 	confident_genefusion = []
 	with open(outpath + 'confident_genefusion.txt', 'r') as fi:
 		for line in fi:
@@ -74,6 +74,9 @@ def polish_bp(outpath: str, genomic_regions: list[tuple[str, int, int]], referen
 			if line.startswith('gene1'):
 				continue
 			ll = line.strip().split('\t') # [Gene1, Gene2, NumSupp, Chrom1, Breakpoint1, Chrom2, Breakpoint2, ID, SupportingReads]
+			# Convert breakpoint positions to integers for numerical operations in merge_genepair
+			ll[4] = int(ll[4])  # Breakpoint1
+			ll[6] = int(ll[6])  # Breakpoint2
 			confident_genefusion.append(ll)
 			gfinfo[f"{ll[7]}_{ll[0]}_{ll[1]}_{ll[3]}_{ll[4]}_{ll[5]}_{ll[6]}"] = ll # ID_gene1_gene2_chrom1_bp1_chrom2_bp2
 
@@ -99,13 +102,14 @@ def polish_bp(outpath: str, genomic_regions: list[tuple[str, int, int]], referen
 			for line in fi:
 				if line.startswith('gene1'):
 					continue
-				ll = line.strip().split('\t') # [Gene1, Gene2, splitread, chrom1, bp1, chrom2, bp2, read_name, mapq, maplen1, maplen2, gapsize]
-				_, _, id, gene1, gene2, chrom1, bp1, chrom2, bp2 = ll[7].split("_") # poa_ctg_ID_gene1_gene2_chrom1_bp1_chrom2_bp2
-				if ll[0] == gene1 and ll[1] == gene2:
-					key = ll[7].replace("poa_ctg_","") # ID_gene1_gene2_chrom1_bp1_chrom2_bp2
-					oldinfo = gfinfo[key]
-					newinfo = [ll[0], ll[1], oldinfo[2], ll[3], ll[4], ll[5], ll[6], oldinfo[7], oldinfo[8]] # [Gene1, Gene2, NumSupp, Chrom1, Breakpoint1, Chrom2, Breakpoint2, ID, SupportingReads]
-					gfinfo[key] = newinfo
+			ll = line.strip().split('\t') # [Gene1, Gene2, splitread, chrom1, bp1, chrom2, bp2, read_name, mapq, maplen1, maplen2, gapsize]
+			_, _, id, gene1, gene2, chrom1, bp1, chrom2, bp2 = ll[7].split("_") # poa_ctg_ID_gene1_gene2_chrom1_bp1_chrom2_bp2
+			if ll[0] == gene1 and ll[1] == gene2:
+				key = ll[7].replace("poa_ctg_","") # ID_gene1_gene2_chrom1_bp1_chrom2_bp2
+				oldinfo = gfinfo[key]
+				# Convert breakpoint positions to integers for numerical operations
+				newinfo = [ll[0], ll[1], oldinfo[2], ll[3], int(ll[4]), ll[5], int(ll[6]), oldinfo[7], oldinfo[8]] # [Gene1, Gene2, NumSupp, Chrom1, Breakpoint1, Chrom2, Breakpoint2, ID, SupportingReads]
+				gfinfo[key] = newinfo
 
 	# merge events with the same gene pair
 	merged_events = []
