@@ -6,7 +6,7 @@ import copy
 gene2strand = {}
 geneinfo = {}
 
-def overlap_with_genes(chrom, start, end, is_single_exon=False):
+def overlap_with_genes(chrom, start, end, is_single_exon=False) -> list[str]:
 	"""
 	Annotate a genomic segment with overlapping genes using binary search.
 	
@@ -22,6 +22,9 @@ def overlap_with_genes(chrom, start, end, is_single_exon=False):
 	Returns:
 		list: List of gene names that overlap with the segment
 	"""
+	# Check if chromosome exists in geneinfo
+	if chrom not in geneinfo:
+		return []
 	allgenes = geneinfo[chrom] # gene_start, gene_end, gene_name, gene_strand, [[exon_start, exon_end],...]
 	pin = int(len(allgenes) / 2)
 	pinstart = 0
@@ -80,6 +83,80 @@ def overlap_with_genes(chrom, start, end, is_single_exon=False):
 
 	return overlapped_genes
 
+def overlap_with_genes_in_details(chrom, start, end, is_single_exon=False) -> list[list[int, int, str, str, list[list[int, int]]]]:
+	"""
+	Annotate a genomic segment with overlapping genes in details using binary search.
+	
+	Uses binary search to efficiently find genes that overlap with the given
+	chromosomal segment. Returns genes that have significant overlap (>50bp or
+	>50% of segment length).
+	
+	Args:
+		chrom (str): Chromosome name
+		start (int): Start position of the segment
+		end (int): End position of the segment
+		is_single_exon (bool): Whether the segment is a single exon
+	Returns:
+		list: List of gene names that overlap with the segment in details
+	"""
+	allgenes = geneinfo[chrom] # gene_start, gene_end, gene_name, gene_strand, [[exon_start, exon_end],...]
+	pin = int(len(allgenes) / 2)
+	pinstart = 0
+	pinend = len(allgenes)
+	overlapped_candidate_genes = []
+	overlapped_genes = []
+	notfound = True
+	while notfound:
+		gene = allgenes[pin]
+		ovlplen = min(gene[1], end) - max(gene[0], start)
+
+		if ovlplen >= 0:
+			notfound=False
+			break
+		if start > gene[1]:
+			newpin = int((pin + pinend) / 2)
+			if newpin == pin:
+				break
+			else:
+				pinstart = pin
+				pin = newpin
+				continue
+		if end < gene[0]:
+			newpin = int((pin + pinstart) / 2)
+			if newpin == pin:
+				break
+			else:
+				pinend = pin
+				pin = newpin
+				continue
+
+	for gene in allgenes[max(0, pin - 10) : pin + 10]:
+		ovlplen = min(gene[1], end) - max(gene[0], start)
+		if ovlplen > 50 or ovlplen > 0.5 * (end - start):
+			overlapped_candidate_genes.append(gene) # add gene name
+
+	# remove genes that are included in other genes
+	if is_single_exon and len(overlapped_candidate_genes) > 1:
+		gene2remove = []
+		for idx in range(len(overlapped_candidate_genes)):
+			g1 = overlapped_candidate_genes[idx]
+			for idx2 in range(idx + 1, len(overlapped_candidate_genes)):
+				g2 = overlapped_candidate_genes[idx2]
+				if g1[0] <= g2[0] and g1[1] >= g2[1]:
+					gene2remove.append(idx2)
+				if g2[0] <= g1[0] and g2[1] >= g1[1]:
+					gene2remove.append(idx)
+		overlapped_candidate_genes = [g for idx, g in enumerate(overlapped_candidate_genes) if idx not in gene2remove]
+	
+	# check exons
+	for gene in overlapped_candidate_genes:
+		for exon in gene[4]:
+			if min(exon[1], end) - max(exon[0], start) > 0:
+				overlapped_genes.append(gene)
+				break
+
+	return overlapped_genes
+
 def calculate_exon_lengths(cigartuple: list[tuple[int, int]]) -> list[int]:
 	"""
 	Calculate exon segment lengths from CIGAR tuple.
@@ -93,16 +170,19 @@ def calculate_exon_lengths(cigartuple: list[tuple[int, int]]) -> list[int]:
 	exon_lengths = []
 	lastlength = 0
 	for pair in cigartuple:
-		if pair[0] in [3,7,8]: # match, soft clip, hard clip
+		# CIGAR operation codes:
+		# 0 = M (match/mismatch), 1 = I (insertion), 2 = D (deletion), 3 = N (intron/skip)
+		# 4 = S (soft clip), 5 = H (hard clip), 7 = = (match), 8 = X (mismatch)
+		if pair[0] == 3: # N (intron/skip) - separates exons
 			exon_lengths.append(lastlength)
-			lastlength =0
-		if pair[0] == 0: # insertion
+			lastlength = 0
+		elif pair[0] in [0, 7, 8]: # M, =, X - all count as aligned matches
 			lastlength += pair[1]
-		if pair[0] in [4,5]:
-			if lastlength != 0: # soft clip, hard clip
+		elif pair[0] in [4, 5]: # S, H (soft/hard clip) - separates exons
+			if lastlength != 0:
 				exon_lengths.append(lastlength)
 				lastlength = 0
-		if pair[0] in [1,2]: # deletion, intron
+		elif pair[0] in [1, 2]: # I (insertion) - counts as aligned
 			continue
 
 	if lastlength != 0:
@@ -148,22 +228,26 @@ def simplify_cigar(cigartuple: list[tuple[int, int]]) -> str:
 	cigarlist = []
 	nummatch = 0
 	for c in cigartuple:
-		if c[0] in [0,7,8]:
+		# CIGAR operation codes: 0=M, 1=I, 2=D, 3=N, 4=S, 5=H, 7==, 8=X
+		if c[0] in [0, 7, 8]: # M, =, X - all count as matches
 			nummatch += c[1]
-		if c[0] in [3]:
-			cigarlist += [str(nummatch) + 'M']
-			nummatch = 0
-		if c[0] in [2]:
+		elif c[0] == 3: # N (intron) - output accumulated match, then continue
+			if nummatch > 0:
+				cigarlist.append(str(nummatch) + 'M')
+				nummatch = 0
+		elif c[0] == 2: # D (deletion) - skip
 			continue
-		if c[0] in [1]:
-			cigarlist += [str(nummatch) + 'M',str(c[1]) + 'I']
-			nummatch = 0
-		if c[0] in [4,5]:
+		elif c[0] == 1: # I (insertion) - output match and insertion
+			if nummatch > 0:
+				cigarlist.append(str(nummatch) + 'M')
+				nummatch = 0
+			cigarlist.append(str(c[1]) + 'I')
+		elif c[0] in [4, 5]: # S, H (soft/hard clip) - output accumulated match
 			if nummatch != 0:
-				cigarlist += [str(nummatch) + 'M']
+				cigarlist.append(str(nummatch) + 'M')
 				nummatch = 0
 	if nummatch != 0:
-		cigarlist += [str(nummatch) + 'M']
+		cigarlist.append(str(nummatch) + 'M')
 		nummatch = 0
 	cigarstring = ','.join(cigarlist)
 	return cigarstring
@@ -233,7 +317,12 @@ def stat_read_info(read, is_record_readseq: bool) -> list:
 	general_alignment_info = calculate_soft_clipping(cigartuple) # get 5' and 3' clipping length
 	general_alignment_info[1] = read.infer_read_length() - general_alignment_info[0] - general_alignment_info[2] # get aligned read length
 	# get NM rate
-	nmrate = read.get_tag('NM') * 1.0 / read.query_alignment_length # get NM rate
+	try:
+		nm_tag = read.get_tag('NM')
+		alignment_length = read.query_alignment_length
+		nmrate = nm_tag * 1.0 / alignment_length if alignment_length > 0 else 0.0
+	except (KeyError, ValueError):
+		nmrate = 0.0  # Default to 0 if NM tag is missing or invalid
 	simplecigar = simplify_cigar(cigartuple) # get simple CIGAR string
 	# get read strand
 	if read.flag in [0, 2048]:
@@ -248,10 +337,17 @@ def stat_read_info(read, is_record_readseq: bool) -> list:
 		readsequence = ''
 		readquality = ''
 	else:
-		readsequence = read.query_sequence
+		readsequence = read.query_sequence if read.query_sequence else ''
 		readqualities = read.query_qualities
-		readquality = ''.join([chr(c + 33) for c in readqualities if c is not None])
+		if readqualities is not None:
+			readquality = ''.join([chr(c + 33) for c in readqualities if c is not None])
+		else:
+			readquality = ''
 
+	# Safely get left and right gene lists, handle None values
+	left_gene_list = overlapped_segments[0][3] if overlapped_segments and len(overlapped_segments) > 0 and overlapped_segments[0][3] is not None else []
+	right_gene_list = overlapped_segments[-1][3] if overlapped_segments and len(overlapped_segments) > 0 and overlapped_segments[-1][3] is not None else []
+	
 	readinfo = [chrom,
 				start,
 				end,
@@ -260,8 +356,8 @@ def stat_read_info(read, is_record_readseq: bool) -> list:
 				has_sa,
 				general_alignment_info,
 				read.mapping_quality,
-				overlapped_segments[0][3],
-				overlapped_segments[-1][3],
+				left_gene_list,
+				right_gene_list,
 				overlapped_segments,
 				readsequence,
 				readquality,
@@ -327,51 +423,113 @@ def get_fusion_within_read(readinfo:
 		genes1 = set(seg1[3]) if seg1[3] else set()
 		genes2 = set(seg2[3]) if seg2[3] else set()
 		
-		# Check if segments align to different genes
-		if len(genes1) > 0 and len(genes2) > 0:
-			# Find genes that are in one segment but not the other
-			genes_only_in_seg1 = genes1 - genes2
-			genes_only_in_seg2 = genes2 - genes1
+		# Find genes that are in one segment but not the other
+		genes_only_in_seg1 = genes1 - genes2
+		genes_only_in_seg2 = genes2 - genes1
+		chrom = readinfo[0]
+		
+		# If there are distinct genes on each side, it's a potential fusion
+		if len(genes_only_in_seg1) > 0 and len(genes_only_in_seg2) > 0: # A_B type
+			# Use the gene with longest mapping length for each side
+			gene1 = list(genes_only_in_seg1)[0]  # Could be improved to select best gene
+			gene2 = list(genes_only_in_seg2)[0]
 			
-			# If there are distinct genes on each side, it's a potential fusion
-			if len(genes_only_in_seg1) > 0 and len(genes_only_in_seg2) > 0:
-				# Use the gene with longest mapping length for each side
-				gene1 = list(genes_only_in_seg1)[0]  # Could be improved to select best gene
-				gene2 = list(genes_only_in_seg2)[0]
-				
-				if gene2strand[gene1] != gene2strand[gene2]:
-					continue
+			# Skip if same gene
+			if gene1 == gene2:
+				continue
+			
+			# Calculate mapping lengths
+			maplen1 = seg1[2]
+			maplen2 = seg2[2]
+			
+			# Filter: each gene should have at least 100bp mapping
+			if maplen1 < 50 or maplen2 < 50:
+				continue
+			
+			# Determine breakpoints
+			chrom = readinfo[0]
+			if readinfo[4] == '+':
+				bp1 = seg1[1]  # bp1 < bp2
+				bp2 = seg2[0]
+			else:
+				bp1 = seg1[0]  # bp1 > bp2
+				bp2 = seg2[1]
+			gapsize = abs(bp2 - bp1)
+			
+			# Format: [gene1, gene2, 'splitread', chrom1, bp1, chrom2, bp2, read_name, [mapq], maplen1, maplen2, gapsize]
+			candifusion = [gene1, gene2, 'splitread', chrom, bp1, chrom, bp2,
+							readinfo[3], [readinfo[7]], maplen1, maplen2, gapsize]
+			candidate.append(candifusion)
+			continue
+		
+		elif len(genes_only_in_seg1) == 0 and len(genes_only_in_seg2) != 0: # A_A+B_B type
+			if i + 1 >= len(overlapped_segments):
+				continue
+			seg3 = overlapped_segments[i + 1]
+			genes3 = set(seg3[3]) if seg3[3] else set()
+			genes_only_in_seg3 = genes3 - genes1
+			genes_only_in_seg1_new = genes1 - genes3
+			if len(genes_only_in_seg3) > 0 and len(genes_only_in_seg1_new) > 0 and len(genes1 + genes3 - genes2) == 0 :
+				# segment 2 contain gene A and B
+				detailed_overlapped_genes = overlap_with_genes_in_details(chrom, seg2[0], seg2[1])
+				gene1 = list(genes1 - genes3)[0]
+				gene2 = list(genes3 - genes1)[0]
 
-				# Skip if same gene
-				if gene1 == gene2:
-					continue
+				# polish bp1
+				idx = 1 if readinfo[4] == '+' else 0
+				bp1 = -1 if idx == 1 else 1e12
+				for gene in detailed_overlapped_genes:
+					if gene[2] != gene1:
+						continue
+					bp1 = max(gene[idx]) if idx == 1 else min(gene[idx])
 				
-				# Calculate mapping lengths
-				maplen1 = seg1[2]
-				maplen2 = seg2[2]
+				# polish bp2
+				idx = 0 if readinfo[4] == '+' else 1
+				bp2 = -1 if idx == 1 else 1e12
+				for gene in detailed_overlapped_genes:
+					if gene[2] != gene2:
+						continue
+					bp2 = max(gene[idx]) if idx == 1 else min(gene[idx])
 				
-				# Filter: each gene should have at least 100bp mapping
-				if maplen1 < 50 or maplen2 < 50:
-					continue
-				
-				# Determine breakpoints
-				chrom = readinfo[0]
-				if readinfo[4] == '+':
-					bp1 = seg1[1]  # bp1 < bp2
-					bp2 = seg2[0]
-				else:
-					bp1 = seg1[0]  # bp1 > bp2
-					bp2 = seg2[1]
 				gapsize = abs(bp2 - bp1)
-				
+			
 				# Format: [gene1, gene2, 'splitread', chrom1, bp1, chrom2, bp2, read_name, [mapq], maplen1, maplen2, gapsize]
-				if readinfo[4] == gene2strand[gene1]:
-					candifusion = [gene1, gene2, 'splitread', chrom, bp1, chrom, bp2,
-					               readinfo[3], [readinfo[7]], maplen1, maplen2, gapsize]
-				else: # strand -
-					candifusion = [gene2, gene1, 'splitread', chrom, bp2, chrom, bp1,
-					               readinfo[3], [readinfo[7]], maplen2, maplen1, gapsize]
+				candifusion = [gene1, gene2, 'splitread', chrom, bp1, chrom, bp2,
+								readinfo[3], [readinfo[7]], maplen1, maplen2, gapsize]
 				candidate.append(candifusion)
+			continue
+
+		elif len(genes_only_in_seg1) != 0 and len(genes_only_in_seg2) == 0: # A_X...X_B type
+			for t in range(1, len(overlapped_segments)):
+				if i + t >= len(overlapped_segments):
+					break
+				seg3 = overlapped_segments[i + t]
+				genes3 = set(seg3[3]) if seg3[3] else set()
+				genes_only_in_seg3 = genes3 - genes1
+				if len(genes_only_in_seg3) > 0:
+					gene1 = list(genes_only_in_seg1)[0]
+					gene2 = list(genes_only_in_seg3)[0]
+						
+					maplen1 = seg1[2]
+					maplen2 = seg3[2]
+					if maplen1 < 50 or maplen2 < 50:
+						continue
+
+					chrom = readinfo[0]
+					if readinfo[4] == '+':
+						bp1 = seg1[1]  # bp1 < bp2
+						bp2 = seg3[0]
+					else:
+						bp1 = seg1[0]  # bp1 > bp2
+						bp2 = seg3[1]
+					gapsize = abs(bp2 - bp1)
+				
+					# Format: [gene1, gene2, 'splitread', chrom1, bp1, chrom2, bp2, read_name, [mapq], maplen1, maplen2, gapsize]
+					candifusion = [gene1, gene2, 'splitread', chrom, bp1, chrom, bp2,
+									readinfo[3], [readinfo[7]], maplen1, maplen2, gapsize]
+					candidate.append(candifusion)
+					break
+	
 	return candidate
 
 """

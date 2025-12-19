@@ -55,7 +55,7 @@ def poa_all(outpath: str, genomic_regions: list[tuple[str, int, int]]) -> int:
 
 	return 0
 
-def polish_bp(outpath: str, genomic_regions: list[tuple[str, int, int]], reference: str, datatype: str, polishbp: bool) -> int:
+def polish_bp(outpath: str, genomic_regions: list[tuple[str, int, int]], reference: str, datatype: str, polishbp: bool, skipsupplementary: bool) -> int:
 	"""
 	Polish breakpoints of gene fusion events
 	Args:
@@ -64,6 +64,7 @@ def polish_bp(outpath: str, genomic_regions: list[tuple[str, int, int]], referen
 		reference: str, the path to the reference genome
 		datatype: str, the type of data (isoseq or long-read)
 		polishbp: bool, whether to polish the breakpoints (need reference genome if set to True)
+		skipsupplementary: bool, whether to skip the supplementary alignments
 	"""
 	stat_split_reads.geneinfo = geneinfo
 
@@ -73,7 +74,7 @@ def polish_bp(outpath: str, genomic_regions: list[tuple[str, int, int]], referen
 		for line in fi:
 			if line.startswith('gene1'):
 				continue
-			ll = line.strip().split('\t') # [Gene1, Gene2, NumSupp, Chrom1, Breakpoint1, Chrom2, Breakpoint2, ID, SupportingReads]
+			ll = line.strip('\n').split('\t') # [Gene1, Gene2, NumSupp, Chrom1, Breakpoint1, Chrom2, Breakpoint2, ID, SupportingReads]
 			# Convert breakpoint positions to integers for numerical operations in merge_genepair
 			ll[4] = int(ll[4])  # Breakpoint1
 			ll[6] = int(ll[6])  # Breakpoint2
@@ -83,9 +84,9 @@ def polish_bp(outpath: str, genomic_regions: list[tuple[str, int, int]], referen
 	if polishbp:
 		# align all consensus sequences to reference genome
 		if datatype == "isoseq":	
-			os.system(f"minimap2 -t 8 -ax splice:hq {reference} --secondary=no {outpath}align_workspace/allalignedseq.fa | samtools sort -o {outpath}align_workspace/allalignedseq.bam  > {outpath}align_workspace/minimap2_allalignedseq.log 2>&1")
+			os.system(f"minimap2 -t 8 -ax splice:hq {reference} --secondary=no {outpath}align_workspace/allalignedseq.fa | samtools sort -o {outpath}align_workspace/allalignedseq.bam")
 		else:
-			os.system(f"minimap2 -t 8 -ax splice {reference} --secondary=no {outpath}align_workspace/allalignedseq.fa | samtools sort -o {outpath}align_workspace/allalignedseq.bam > {outpath}align_workspace/minimap2_allalignedseq.log 2>&1")
+			os.system(f"minimap2 -t 8 -ax splice {reference} --secondary=no {outpath}align_workspace/allalignedseq.fa | samtools sort -o {outpath}align_workspace/allalignedseq.bam")
 	
 		os.system(f"samtools index {outpath}align_workspace/allalignedseq.bam")
 		os.system(f"mkdir -p {outpath}align_workspace/raw_signal/")
@@ -97,14 +98,33 @@ def polish_bp(outpath: str, genomic_regions: list[tuple[str, int, int]], referen
 											start,
 											end,
 											is_record_readseq = False)
+
+		# analyze supplementary alignment
+		if not skipsupplementary:
+			supplementary_read_info = {}
+			for chrom, start, end in genomic_regions:
+				with open(f"{outpath}align_workspace/raw_signal/multigene_read_{chrom}_{start}_{end}.txt", 'r') as fi:
+					for line in fi:
+						if line.startswith('chrom'):
+							continue
+						readinfo = line.strip().split('\t') # chrom, start, end, read_name, strand, is_supplementary, general_alignment_info, mapq, nmrate, left_gene, right_gene, exon_info, cigar, sequence, quality
+						readinfo[1], readinfo[2], readinfo[5] = int(readinfo[1]), int(readinfo[2]), bool(readinfo[5])
+						if readinfo[5]: # is supplementary alignment
+							if readinfo[3] not in supplementary_read_info.keys():
+								supplementary_read_info[readinfo[3]] = []
+							supplementary_read_info[readinfo[3]].append(readinfo[0:3])
+			for read_name, read_pos_list in supplementary_read_info.items():
+				stat_split_reads.reanalyze_supplementary_alignment(f"{outpath}align_workspace/allalignedseq.bam",
+																	f"{outpath}align_workspace/",
+																	read_name,
+																	read_pos_list)
+
 		# update
 		with open(f"{outpath}align_workspace/rawsignal.txt", "r") as fi:
 			for line in fi:
 				if line.startswith('gene1'):
 					continue
-			ll = line.strip().split('\t') # [Gene1, Gene2, splitread, chrom1, bp1, chrom2, bp2, read_name, mapq, maplen1, maplen2, gapsize]
-			_, _, id, gene1, gene2, chrom1, bp1, chrom2, bp2 = ll[7].split("_") # poa_ctg_ID_gene1_gene2_chrom1_bp1_chrom2_bp2
-			if ll[0] == gene1 and ll[1] == gene2:
+				ll = line.strip('\n').split('\t') # [Gene1, Gene2, splitread, chrom1, bp1, chrom2, bp2, read_name, mapq, maplen1, maplen2, gapsize]
 				key = ll[7].replace("poa_ctg_","") # ID_gene1_gene2_chrom1_bp1_chrom2_bp2
 				oldinfo = gfinfo[key]
 				# Convert breakpoint positions to integers for numerical operations

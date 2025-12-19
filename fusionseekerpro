@@ -297,18 +297,18 @@ def main():
 		with open(args.outpath+'log.txt','a') as logfile:
 			if args.ref:
 				try:
-					align.polish_bp(args.outpath, genomic_regions, args.ref, args.datatype, True)
+					align.polish_bp(args.outpath, genomic_regions, args.ref, args.datatype, True, args.skipsupplementary)
 					logfile.write('[INFO] Transcript sequence generation done. Start polishing gene fusion breakpoints...\n')
 				except Exception as e:
 					logfile.write(f'[WARNING] Transcript sequence generation failed: {e}\n')
-					os.system(f'touch {args.outpath}confident_genefusion_transcript_sequence.fa')
+					os.system(f'touch {args.outpath}confident_genefusion_refined_transcript_sequence.fa')
 			else:
 				try:
-					align.polish_bp(args.outpath, genomic_regions, args.ref, args.datatype, False)
+					align.polish_bp(args.outpath, genomic_regions, args.ref, args.datatype, False, args.skipsupplementary)
 					logfile.write('[INFO] Transcript sequence generation done.\n[WARNING] No reference genome provided. Skipping breakpoint polish. (To enable breakpoint polish, please provide reference genome file.)\n')
 				except Exception as e:
 					logfile.write(f'[WARNING] Transcript sequence generation failed: {e}\n')
-					os.system(f'touch {args.outpath}confident_genefusion_transcript_sequence.fa')
+					os.system(f'touch {args.outpath}confident_genefusion_refined_transcript_sequence.fa')
 
 		print("Transcript sequence generation done.")
 		with open(args.outpath + 'log.txt','a') as logfile:
