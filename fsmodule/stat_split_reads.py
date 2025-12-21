@@ -1,4 +1,3 @@
-from errno import EILSEQ
 import pysam
 import os
 import copy
@@ -97,7 +96,7 @@ def overlap_with_genes_in_details(chrom, start, end, is_single_exon=False) -> li
 		end (int): End position of the segment
 		is_single_exon (bool): Whether the segment is a single exon
 	Returns:
-		list: List of gene names that overlap with the segment in details
+		list: List of gene names that overlap with the segment in details, start, end, gene_name, gene_strand, [[exon_start, exon_end],...]
 	"""
 	allgenes = geneinfo[chrom] # gene_start, gene_end, gene_name, gene_strand, [[exon_start, exon_end],...]
 	pin = int(len(allgenes) / 2)
@@ -252,6 +251,17 @@ def simplify_cigar(cigartuple: list[tuple[int, int]]) -> str:
 	cigarstring = ','.join(cigarlist)
 	return cigarstring
 
+def rc(sequence: str) -> str:
+	"""
+	Reverse complement a DNA sequence.
+	
+	Args:
+		sequence (str): DNA sequence to reverse complement
+	Returns:
+		str: Reverse complement of the sequence
+	"""
+	return sequence[::-1].translate(str.maketrans('ATCG', 'TAGC'))
+
 def stat_read_info(read, is_record_readseq: bool) -> list:
 	"""
 	Detect fusion signals within a single read alignment.
@@ -269,7 +279,7 @@ def stat_read_info(read, is_record_readseq: bool) -> list:
 			             general_alignment_info, mapq, left_gene, right_gene, exon_segments, sequence,
 			             quality, nm_rate, simple_cigar, read_object]
 	"""
-	alignpair = read.get_aligned_pairs() # get pair of alignment coordinates base by base [(query_base, reference_base),...]
+	alignpair = read.get_aligned_pairs() # get pair of alignment coordinates base by base [(query_base, reference_base),...], always from small to large in reference and query
 	alignpair = [c for c in alignpair if c[1] != None and c[0] != None]
 	chrom = read.reference_name # get chromosome name
 	has_sa = read.has_tag('SA')
@@ -297,6 +307,9 @@ def stat_read_info(read, is_record_readseq: bool) -> list:
 		for exon_len in exon_lengths:
 			aligned_segments.append([alignpair[accumalignlen][1], alignpair[accumalignlen + exon_len - 1][1], exon_len])
 			accumalignlen += exon_len
+
+		if read.is_reverse:
+			aligned_segments = aligned_segments[::-1] # reverse the aligned segments
 
 		overlapped_segments = []
 		specifically_aligned_genes = []
@@ -338,6 +351,8 @@ def stat_read_info(read, is_record_readseq: bool) -> list:
 		readquality = ''
 	else:
 		readsequence = read.query_sequence if read.query_sequence else ''
+		if read.is_reverse:
+			readsequence = rc(readsequence)
 		readqualities = read.query_qualities
 		if readqualities is not None:
 			readquality = ''.join([chr(c + 33) for c in readqualities if c is not None])

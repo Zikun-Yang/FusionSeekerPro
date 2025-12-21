@@ -5,6 +5,7 @@ import fsmodule.construct_gtf as construct_gtf
 import fsmodule.stat_split_reads as stat_split_reads
 import fsmodule.cluster as cluster
 import fsmodule.align as align
+import fsmodule.annotate_fusion as annotate_fusion
 from multiprocessing import Pool
 import argparse
 import pysam
@@ -317,6 +318,25 @@ def main():
 		print(f"Transcript sequence generation already done. Skipping. (To redo the transcript sequence generation, please use --redo flag.)")
 		with open(args.outpath + 'log.txt', 'a') as logfile:
 			logfile.write('[INFO] Transcript sequence generation already done. Skipping.\n')
+
+	"""
+	Step 5: Gene structure annotation and fusion type classification
+	"""
+	is_annotated = False
+	with open(args.outpath + 'confident_genefusion_refined.txt', 'r') as fi:
+		first_line = fi.readline()
+		if 'exonNum' in first_line: # exonNum, exonType, fusionType
+			is_annotated = True
+	
+	if not is_annotated or args.redo:
+		annotate_fusion.annotate_fusion(args.outpath)
+		print("Gene structure annotation and fusion type classification done.")
+		with open(args.outpath + 'log.txt','a') as logfile:
+			logfile.write('[INFO] Gene structure annotation and fusion type classification done.\n')
+	else:
+		print(f"Gene structure annotation and fusion type classification already done. Skipping. (To redo, please use --redo flag.)")
+		with open(args.outpath + 'log.txt', 'a') as logfile:
+			logfile.write('[INFO] Gene structure annotation and fusion type classification already done. Skipping.\n')
 
 	# remove intermediate files
 	if not args.keepfile:
