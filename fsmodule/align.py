@@ -2,28 +2,43 @@ import os
 from . import stat_split_reads
 from . import cluster
 
+def is_empty(file_path: str) -> bool:
+	"""
+	Check if a poa fasta file is empty
+	Args:
+		file_path: str, the path to the file
+	"""
+	if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+		return True
+	lines = open(file_path, 'r').readlines()
+	seq = lines[1].strip()
+	return seq == ''
+
 def get_fastq_seq_num(fastq_path: str) -> int:
 	"""
 	Get the number of sequences in a fastq file
 	Args:
 		fastq_path: str, the path to the fastq file
 	"""
+	num_seq = 0
 	with open(fastq_path, 'r') as fi:
-		return sum(1 for line in fi if line.startswith('@'))
+		for line in fi:
+			if line.startswith('@'):
+				num_seq += 1
+	return num_seq
 
 def downsample_fastq(fastq_path: str, new_num_seq: int) -> int:
 	"""
 	Downsample a fastq file
 	Args:
 		fastq_path: str, the path to the fastq file
-		num_seq: int, the number of sequences in the fastq file
 		new_num_seq: int, the number of sequences to downsample to
 	"""
 	with open(fastq_path, 'r') as fi:
 		lines = fi.readlines()
 		new_lines = lines[0 : new_num_seq * 4]
-		with open(fastq_path, 'w') as fo:
-			fo.writelines(new_lines)
+	with open(fastq_path, 'w') as fo:
+		fo.writelines(new_lines)
 	return 0
 
 def poa_all(outpath: str, genomic_regions: list[tuple[str, int, int]]) -> int:
@@ -71,10 +86,9 @@ def poa_all(outpath: str, genomic_regions: list[tuple[str, int, int]]) -> int:
 						fastq.write(f"@{readname}\n{allreadseq[readname][0]}\n+\n{allreadseq[readname][1]}\n")
 					else:
 						fastq.write(f"@{readname}\n{allreadseq[readname][0]}\n+\n{'I' * len(allreadseq[readname][0])}\n")
-			while not os.path.exists(f'{outpath}align_workspace/poa_{gfinfo}.fa') or os.path.getsize(f'{outpath}align_workspace/poa_{gfinfo}.fa') == 0:
-				try:
-					os.system(f'bsalign poa {outpath}align_workspace/suppread_{gfinfo}.fastq -o {outpath}align_workspace/poa_{gfinfo}.fa > {outpath}align_workspace/poa_{gfinfo}.log 2>&1')
-				except Exception as e:
+			while not os.path.exists(f'{outpath}align_workspace/poa_{gfinfo}.fa') or is_empty(f'{outpath}align_workspace/poa_{gfinfo}.fa'):
+				os.system(f'bsalign poa {outpath}align_workspace/suppread_{gfinfo}.fastq -o {outpath}align_workspace/poa_{gfinfo}.fa > {outpath}align_workspace/poa_{gfinfo}.log 2>&1')
+				if is_empty(f'{outpath}align_workspace/poa_{gfinfo}.fa'):
 					num_seq = get_fastq_seq_num(f'{outpath}align_workspace/suppread_{gfinfo}.fastq')
 					if num_seq > 50: 
 						new_num_seq = num_seq - 10
@@ -82,10 +96,12 @@ def poa_all(outpath: str, genomic_regions: list[tuple[str, int, int]]) -> int:
 						new_num_seq = num_seq - 5
 					else:
 						new_num_seq = num_seq - 1
+					print(f"Reducing sequence number from {num_seq} to {new_num_seq}")
+					if new_num_seq <= 1:
+						break
 					downsample_fastq(f'{outpath}align_workspace/suppread_{gfinfo}.fastq', new_num_seq)
-					with open(f'{outpath}align_workspace/poa_{gfinfo}.log', 'a') as fo:
-						fo.write(f"Error: {e}\n, reducing sequence number from {num_seq} to {new_num_seq}\n, retrying...\n")
-					continue
+					with open(f'{outpath}log.txt', 'a') as logfile:
+						logfile.write(f"Reducing sequence number from {num_seq} to {new_num_seq}\n, retrying...\n")
 			poactg = open(f'{outpath}align_workspace/poa_{gfinfo}.fa','r').read().strip().split('\n') # ['cns_seq', xxxxxxxxx]
 			if len(poactg) != 2:
 				continue

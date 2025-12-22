@@ -171,16 +171,23 @@ def annotate_fusion(outpath: str) -> None:
             old_ll = old_breakpoint[ll[0]] # gene1, gene2, numSupp, chrom1, bp1, chrom2, bp2, ID, readNames
             readname = f"poa_ctg_{old_ll[7]}_{old_ll[0]}_{old_ll[1]}_{old_ll[3]}_{old_ll[4]}_{old_ll[5]}_{old_ll[6]}"
             if readname not in reads_dict:
-                raise ValueError(f"Read {readname} not found in bam file")
-            reads = reads_dict[readname]
-            # stats exon info for each read
-            exon_num, exon_type, exon_coordinates = stats_exon(reads, ll[1], ll[2])
-            exon_num_str = '-'.join([str(num) for num in exon_num])
-            exon_type_str = '-'.join(exon_type)
-            exon_coordinates_str = ','.join([f"{chrom}:{start}-{end}" for chrom, start, end in exon_coordinates])
-            # classify fusion type
-            fusionType = classify_fusion_type(exon_num, exon_type)
-            lines += f"{line.strip('\n')}\t{exon_num_str}\t{exon_type_str}\t{exon_coordinates_str}\t{fusionType}\n"
+                with open(outpath + 'log.txt', 'a') as logfile:
+                    logfile.write(f"Read {readname} not found in bam file\n")
+                exon_num_str = 'NA'
+                exon_type_str = 'NA'
+                exon_coordinates_str = 'NA'
+                fusionType = 'NA'
+                lines += f"{line.strip('\n')}\t{exon_num_str}\t{exon_type_str}\t{exon_coordinates_str}\t{fusionType}\n"
+            else:
+                reads = reads_dict[readname]
+                # stats exon info for each read
+                exon_num, exon_type, exon_coordinates = stats_exon(reads, ll[1], ll[2])
+                exon_num_str = '-'.join([str(num) for num in exon_num])
+                exon_type_str = '-'.join(exon_type)
+                exon_coordinates_str = ','.join([f"{chrom}:{start}-{end}" for chrom, start, end in exon_coordinates])
+                # classify fusion type
+                fusionType = classify_fusion_type(exon_num, exon_type)
+                lines += f"{line.strip('\n')}\t{exon_num_str}\t{exon_type_str}\t{exon_coordinates_str}\t{fusionType}\n"
     
     # replace
     with open(outpath + 'confident_genefusion_refined.txt', 'w') as fo:
