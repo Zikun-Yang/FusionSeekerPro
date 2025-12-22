@@ -25,17 +25,44 @@ def mergeGeneFusion(fusion_files: list[str], output_file: str, sort: str = "numS
     
     genepair2fusion = defaultdict(list)
 
+    # check header and determine the file type: clustered, confident, confident_refined
+    """
+    header:
+    clustered: gene1, gene2, numSupp, chrom1, bp1, chrom2, bp2, mapq, readNames
+    confident: gene1, gene2, numSupp, chrom1, bp1, chrom2, bp2, ID, readNames
+    confident_refined: ID, gene1, gene2, numSupp, chrom1, bp1, chrom2, bp2, readNames, exonNum, exonType, exonCoordinates, fusionType
+    """
+    file_type = None
+    header = None
+    for fusion_file in fusion_files:
+        with open(fusion_file, 'r') as f:
+            line = f.readline()
+            if header is None:
+                header = line.strip()
+                if line.startswith("ID"):
+                    file_type = "confident_refined" if "exonNum" in line else "confident"
+                else: # start with gene1
+                    file_type = "clustered"
+            else:
+                if header != line.strip():
+                    raise ValueError(f"Header mismatch in {fusion_file}, file type should be {file_type}")
+    
+    # set idx
+    idx = {}
+    for i, item in enumerate(header.strip().split("\t")):
+        idx[item] = i
+
     # read all fusion files
-    fusion = [] # ID, gene1, gene2, numSupp, chrom1, bp1, chrom2, bp2, readNames
+    print(f"Reading fusion files: {fusion_files}")
     for fusion_file in fusion_files:
         with open(fusion_file, 'r') as f:
             for line in f:
-                if line.startswith("ID"):
+                if line.startswith("ID") or line.startswith("gene1"):
                     continue
                 ll = line.strip().split("\t")
-                ll[3] = int(ll[3])
-                fusion.append(ll)
-                genepair2fusion[(line[1], line[2])].append(ll)
+                if (ll[idx["gene1"]], ll[idx["gene2"]]) not in genepair2fusion:
+                    genepair2fusion[(ll[idx["gene1"]], ll[idx["gene2"]])] = []
+                genepair2fusion[(ll[idx["gene1"]], ll[idx["gene2"]])].append(ll)
 
     merged_fusion = []
     # trying to merge fusion events
@@ -49,25 +76,28 @@ def mergeGeneFusion(fusion_files: list[str], output_file: str, sort: str = "numS
                     continue
                 f1 = fusions[i]
                 for j in range(i + 1, len(fusions)):
-                    f2 = fusion[j]
-                    if f1[4] == f2[4] and f1[5] == f2[5] and f1[6] == f2[6] and f1[7] == f2[7]:
+                    f2 = fusions[j]
+                    if f1[idx["chrom1"]] == f2[idx["chrom1"]] and f1[idx["bp1"]] == f2[idx["bp1"]] and f1[idx["chrom2"]] == f2[idx["chrom2"]] and f1[idx["bp2"]] == f2[idx["bp2"]]:
                         ignored.append(j)
-                        f1[8] = ",".join(set(f1[8].split(",") + f2[8].split(",")))
-                        f1[3] = len(set(f1[8].split(",")))
+                        f1[idx["readNames"]] = ",".join(set(f1[idx["readNames"]].split(",") + f2[idx["readNames"]].split(",")))
+                        f1[idx["numSupp"]] = str(len(set(f1[idx["readNames"]].split(","))))
                 merged_fusion.append(f1)
 
     # sort merged fusion events
     if sort == "numSupp":
-        merged_fusion.sort(key=lambda x: x[3], reverse=True)
+        merged_fusion.sort(key=lambda x: x[idx["numSupp"]], reverse=True)
     elif sort == "gene":
-        merged_fusion.sort(key=lambda x: (x[1], x[2]))
+        merged_fusion.sort(key=lambda x: (x[idx["gene1"]], x[idx["gene2"]]))
 
     # write merged fusion events to output file
     cot = 1
-    with open(output_file, 'w') as f:
-        f.write(f"ID\tgene1\tgene2\tnumSupp\tchrom1\tbp1\tchrom2\tbp2\treadNames\n")
+    with open(output_file, 'w') as fo:
+        fo.write(header + "\n")
         for fusion in merged_fusion:
-            f.write(f"GF{cot:03d}\t{fusion[1]}\t{fusion[2]}\t{fusion[3]}\t{fusion[4]}\t{fusion[5]}\t{fusion[6]}\t{fusion[7]}\t{fusion[8]}\n")
+            # rename the ID
+            if file_type in ["confident_refined", "confident"]:
+                fusion[idx["ID"]] = f"GF{cot:03d}"
+            fo.write("\t".join(fusion) + "\n")
             cot += 1
 
 def main():
