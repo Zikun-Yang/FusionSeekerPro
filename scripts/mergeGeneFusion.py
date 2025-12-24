@@ -85,7 +85,7 @@ def mergeGeneFusion(fusion_files: list[str], output_file: str, sort: str = "numS
 
     # sort merged fusion events
     if sort == "numSupp":
-        merged_fusion.sort(key=lambda x: x[idx["numSupp"]], reverse=True)
+        merged_fusion.sort(key=lambda x: int(x[idx["numSupp"]]), reverse=True)
     elif sort == "gene":
         merged_fusion.sort(key=lambda x: (x[idx["gene1"]], x[idx["gene2"]]))
 
